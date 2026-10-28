@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' show FontFeature;
 
 import 'package:flutter/material.dart';
 
@@ -117,7 +116,9 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final compact = MediaQuery.sizeOf(context).width < 680;
+    final size = MediaQuery.sizeOf(context);
+    final compact = size.width < 680;
+    final condensed = compact || size.height < 760;
     final content = Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 980),
@@ -127,13 +128,13 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _TopBar(compact: compact),
-              SizedBox(height: compact ? 38 : 58),
+              SizedBox(height: condensed ? 28 : 58),
               Text('YOUR SPACE TO FOCUS', style: _eyebrowStyle),
               const SizedBox(height: 10),
               Text(
                 'Make room for\nwhat matters.',
                 style: TextStyle(
-                  fontSize: compact ? 37 : 52,
+                  fontSize: condensed ? 37 : 52,
                   height: 1.08,
                   letterSpacing: -2.1,
                   fontWeight: FontWeight.w600,
@@ -149,7 +150,7 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
                 'This first build includes a working stopwatch. Other sections are planned.',
                 style: TextStyle(fontSize: 11, color: _muted),
               ),
-              SizedBox(height: compact ? 30 : 38),
+              SizedBox(height: condensed ? 22 : 38),
               if (compact)
                 _FocusCard(
                   elapsed: _elapsed,
@@ -188,7 +189,7 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
                 const SizedBox(height: 18),
                 _SessionNotice(label: _lastSessionLabel!),
               ],
-              if (compact) const SizedBox(height: 24) else const Spacer(),
+              if (condensed) const SizedBox(height: 16) else const Spacer(),
               const Row(
                 children: [
                   Icon(Icons.cloud_off_outlined, size: 16, color: _muted),
@@ -212,7 +213,11 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
             : Row(
                 children: [
                   const _Sidebar(),
-                  Expanded(child: content),
+                  Expanded(
+                    child: size.height < 690
+                        ? SingleChildScrollView(child: content)
+                        : content,
+                  ),
                 ],
               ),
       ),
@@ -231,7 +236,8 @@ class _TopBar extends StatelessWidget {
         if (compact) ...[
           const Icon(Icons.bubble_chart_rounded, color: _violet, size: 25),
           const SizedBox(width: 9),
-          const Text('FlowState', style: TextStyle(fontWeight: FontWeight.w700)),
+          const Text('FlowState',
+              style: TextStyle(fontWeight: FontWeight.w700)),
           const Spacer(),
         ] else ...[
           const Icon(Icons.wb_sunny_outlined, size: 17, color: _violet),
@@ -287,8 +293,7 @@ class _Sidebar extends StatelessWidget {
           const Spacer(),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 11),
-            child: Text('MILESTONE 1 · IN PROGRESS',
-                style: _eyebrowStyle),
+            child: Text('MILESTONE 1A · VERIFIED', style: _eyebrowStyle),
           ),
           const SizedBox(height: 12),
         ],
@@ -298,32 +303,34 @@ class _Sidebar extends StatelessWidget {
 }
 
 class _NavItem extends StatelessWidget {
-  const _NavItem({required this.icon, required this.label, this.selected = false});
+  const _NavItem(
+      {required this.icon, required this.label, this.selected = false});
   final IconData icon;
   final String label;
   final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 5),
-      decoration: BoxDecoration(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: Material(
         color: selected ? const Color(0xFF292335) : Colors.transparent,
         borderRadius: BorderRadius.circular(9),
-      ),
-      child: ListTile(
-        dense: true,
-        leading: Icon(icon, size: 19, color: selected ? _violet : _muted),
-        title: Text(label,
-            style: TextStyle(
-              fontSize: 13,
-              color: selected ? Colors.white : _muted,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-            )),
-        onTap: () {},
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 11),
-        minLeadingWidth: 22,
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          dense: true,
+          leading: Icon(icon, size: 19, color: selected ? _violet : _muted),
+          title: Text(label,
+              style: TextStyle(
+                fontSize: 13,
+                color: selected ? Colors.white : _muted,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              )),
+          onTap: () {},
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 11),
+          minLeadingWidth: 22,
+        ),
       ),
     );
   }
@@ -403,8 +410,14 @@ class _FocusCard extends StatelessWidget {
               Expanded(
                 child: FilledButton.icon(
                   onPressed: isRunning ? onPause : onStart,
-                  icon: Icon(isRunning ? Icons.pause_rounded : Icons.play_arrow_rounded),
-                  label: Text(isRunning ? 'Pause' : hasStarted ? 'Resume' : 'Start focus'),
+                  icon: Icon(isRunning
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded),
+                  label: Text(isRunning
+                      ? 'Pause'
+                      : hasStarted
+                          ? 'Resume'
+                          : 'Start focus'),
                   style: FilledButton.styleFrom(
                     backgroundColor: _violet,
                     foregroundColor: const Color(0xFF17131F),

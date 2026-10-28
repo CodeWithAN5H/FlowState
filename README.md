@@ -4,14 +4,19 @@ FlowState is an offline-first productivity and collaborative study app for Windo
 
 ## Current milestone
 
-The starter includes:
+**Milestone 0 and Milestone 1A are complete. Milestone 1B has not started.**
 
-- A Flutter Material 3 app shell, with a desktop sidebar and a compact mobile layout.
-- A working stopwatch with start, pause, resume, finish, and interrupted/cancel states.
-- A pure-Dart timer model using a monotonic `Stopwatch`, plus deterministic unit tests.
-- Honest empty-state messaging: session history and persistence are not implemented yet; Focus Lock is not enabled.
+Milestone 1A currently includes:
 
-Not implemented yet: a database, crash/restart recovery, Pomodoro/custom countdowns, tasks, habits, notes, insights, navigation between sections, notification delivery, export, authentication, synchronization, rooms, browser/native enforcement, or release artifacts. UI placeholders are not functional features.
+- A Flutter Material 3 dark UI with a persistent desktop sidebar, timer/status cards, and a vertically scrollable compact layout for narrow/mobile screens.
+- A usable stopwatch with start, pause, resume, completed finish, and interrupted/cancel states.
+- A separate pure-Dart timer model based on a monotonic `Stopwatch` rather than decrementing ticks.
+- Deterministic unit tests for running, pausing, resuming, finishing, cancelling, and idle calls.
+- Explicit UI copy that session history is not saved and Focus Lock is not enabled.
+
+The stopwatch and most-recent finish/interruption label are in memory only. The Windows debug app was built and observed running after a clean relaunch. No persistent session data is claimed.
+
+Not implemented: a database, crash/restart recovery, Pomodoro/custom countdowns, task CRUD, habits, notes, insights, working navigation between sections, notification delivery, export, authentication, synchronization, rooms, browser/native enforcement, or release artifacts. These are later milestones, and visible overview copy is informational rather than functional controls.
 
 ## Architecture proposal
 
@@ -24,7 +29,7 @@ Do not add the database, routing, or state packages until their first real miles
 ### Milestones
 
 - [x] Milestone 0 — inspect workspace/toolchain; assess Focus Lock and zero-cost backend options; record risks and architecture.
-- [ ] Milestone 1A — responsive shell and tested stopwatch model (this initial implementation).
+- [x] Milestone 1A — responsive shell and tested stopwatch model (Flutter dependencies, analysis, tests, and Windows debug launch verified).
 - [ ] Milestone 1B — database, migrations, recoverable sessions, and functional home/tasks/focus screens.
 - [ ] Milestone 1C — local habits, notes, insights, settings, data export, and offline tests.
 - [ ] Milestone 2 — optional identities, friends, private rooms, authorization, realtime sessions and background sync.
@@ -34,13 +39,13 @@ Do not add the database, routing, or state packages until their first real miles
 
 No release milestone is complete until Windows installer, Linux package, and Android APK artifacts have actually built; platform-specific install/upgrade behavior must also be tested on the target operating systems/devices. This Windows workspace does not itself prove those tests.
 
-## Milestone 0 findings
+## Verified environment and architecture decisions
 
-### Toolchain available in this workspace
+### Toolchain used for Milestone 1A
 
-The environment is Windows 11 (MINGW64/Git Bash) with Java 21. Flutter, Dart, Android Debug Bridge, CMake, Ninja, Clang, and Gradle are not on `PATH`. Consequently this workspace cannot currently run `flutter pub get`, `flutter analyze`, `flutter test`, any Flutter build, or a device-install test. No installable artifact has been produced. No other project files existed at initial inspection.
+The initial PATH and common-location checks found no Flutter SDK, so I downloaded the official Flutter 3.47.8 stable Windows SDK archive (1,937,300,499 bytes), verified its published MD5 `ca208e3066cce928600bb56b4c4c5011`, and extracted it under the Git-ignored project-local `.tooling/flutter/` directory. No system PATH or global settings were changed. This SDK includes Dart 3.13.7. The Flutter `.bat` launcher hangs from this host's Git Bash, so I invoked the SDK's real Flutter tool snapshot using its bundled Dart executable for checks and Windows launch.
 
-Required next: install the Flutter stable SDK and add its `bin` folder to `PATH`; install Android Studio/Android SDK tools (and connect a physical Android device or start an emulator); install Visual Studio with the **Desktop development with C++** workload for Windows builds. Linux builds require a Linux build machine/CI runner plus Flutter, Clang, CMake, Ninja, pkg-config, GTK 3 development headers, and the C++ standard library headers. See the official [Flutter install guide](https://docs.flutter.dev/install), [Android setup](https://docs.flutter.dev/platform-integration/android/setup), [Windows setup](https://docs.flutter.dev/platform-integration/windows/setup), and [Linux setup](https://docs.flutter.dev/platform-integration/linux/setup).
+Visual Studio 2022 Community's Native Desktop workload, x64/x86 VC tools, and Windows SDK 10.0.26100.0 are installed. Flutter generated Windows and Android runner scaffolding. Android is scaffolded only: Flutter Doctor reports no Android SDK. No Linux runner was generated on this Windows host.
 
 ### Focus Lock risk
 
@@ -60,15 +65,24 @@ Source: [Supabase official pricing](https://supabase.com/pricing), [official bil
 
 ## Run and test
 
-With Flutter installed:
+The local Flutter SDK is kept in ignored `.tooling/flutter/`. On a Windows terminal with `flutter` on PATH, run:
 
 ```sh
 flutter pub get
+flutter analyze
 flutter test
 flutter run -d windows
 ```
 
-For a connected Android device, use `flutter run -d <device-id>` after `flutter devices`. The current timer tests exercise the pure-Dart lifecycle with a deterministic fake monotonic clock; they do not establish UI, persistence, background execution, or platform Focus Lock behavior.
+In the checked Git Bash host, the Flutter `.bat` shim does not return; the equivalent SDK tool entry point used for the verified commands was:
+
+```sh
+.tooling/flutter/bin/cache/dart-sdk/bin/dart.exe \
+  --packages=.tooling/flutter/packages/flutter_tools/.dart_tool/package_config.json \
+  .tooling/flutter/bin/cache/flutter_tools.snapshot <command>
+```
+
+`pub get` succeeded, analysis is clean after removing an unused import and repairing generated config, and all five timer unit tests passed. The Windows runner built and ran successfully with the confirmed Visual Studio C++ workload and Windows SDK. The first live launch revealed a `ListTile` ink-layer assertion and a short-height layout overflow; both were corrected before the final relaunch, which logged neither issue. The tests establish timer-model lifecycle behavior only; the app is still in-memory and has no persistence, crash recovery, or Focus Lock.
 
 ## Build and distribution roadmap
 
@@ -80,3 +94,7 @@ Release artifacts are **not yet generated**. Once the product and its data behav
 - Provide separate source and artifact deliverables, reproducible commands, a practical friends' setup guide, privacy/Focus Lock limitations, and feature status before calling the application complete.
 
 A free GitHub release can be considered only after actual artifacts build; no release has been published.
+
+## Current verification record
+
+Using Flutter 3.47.8/Dart 3.13.7 installed under ignored `.tooling/`: `flutter pub get` succeeded; `flutter analyze` reported no issues after the unused import and generated analyzer configuration were corrected; `flutter test` passed all five lifecycle tests; the Windows debug app compiled and was observed running after a clean relaunch. No release build or installer/APK was produced. Android device and Linux support remain unverified. Milestone 1B has not begun. Full details are in [PROJECT_STATUS.md](PROJECT_STATUS.md).

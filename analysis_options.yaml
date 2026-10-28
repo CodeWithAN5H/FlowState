@@ -1,0 +1,6 @@
+analyzer:
+  exclude:
+    - .dart_tool/**
+    - build/**
+    - android/**
+    - windows/**
