@@ -1,12 +1,12 @@
 # FlowState
 
-FlowState is an offline-first productivity and collaborative study app for Windows, Linux, and Android. Development is intentionally incremental. The current starter milestone is a dark, responsive app shell with a working, in-memory monotonic focus stopwatch; it is not yet the complete product.
+FlowState is an offline-first productivity and collaborative study app for Windows, Linux, and Android. Development is intentionally incremental. The current Milestone 1B checkpoint has a dark, responsive Home/Tasks/Focus app with local SQLite storage and recoverable focus sessions; native Windows build verification remains blocked by local symlink configuration.
 
 ## Current milestone
 
-**Milestone 0 and Milestone 1A are complete. Milestone 1B has not started.**
+**Milestone 0 and Milestone 1A are complete. Milestone 1B is in progress; its local-data, recoverable-session, task, and Home implementations have passed source analysis and automated tests, but Windows runtime verification is blocked by missing Developer Mode symlink support.**
 
-Milestone 1A currently includes:
+Milestone 1A includes:
 
 - A Flutter Material 3 dark UI with a persistent desktop sidebar, timer/status cards, and a vertically scrollable compact layout for narrow/mobile screens.
 - A usable stopwatch with start, pause, resume, completed finish, and interrupted/cancel states.
@@ -14,23 +14,21 @@ Milestone 1A currently includes:
 - Deterministic unit tests for running, pausing, resuming, finishing, cancelling, and idle calls.
 - Explicit UI copy that session history is not saved and Focus Lock is not enabled.
 
-The stopwatch and most-recent finish/interruption label are in memory only. The Windows debug app was built and observed running after a clean relaunch. No persistent session data is claimed.
+Milestone 1A was verified in commit `7405c2a`; its Windows debug app was built and observed running. Milestone 1B now adds local SQLite persistence, schema v2 migrations, session recovery and lifecycle handling, persistent task CRUD, responsive Home/Tasks/Focus navigation, and dashboard statistics derived from stored sessions/tasks. The app remains offline-first and requires no account or backend.
 
-Not implemented: a database, crash/restart recovery, Pomodoro/custom countdowns, task CRUD, habits, notes, insights, working navigation between sections, notification delivery, export, authentication, synchronization, rooms, browser/native enforcement, or release artifacts. These are later milestones, and visible overview copy is informational rather than functional controls.
+Milestone 1B is **not yet marked complete**: repository/migration/session tests, formatting, and static analysis pass, but native Windows build and runtime verification cannot run until Windows Developer Mode permits Flutter’s plugin symlinks. Habits, notes, insights, settings, notifications, export, authentication, synchronization, rooms, Focus Lock, and release artifacts remain out of scope or later milestones.
 
 ## Architecture proposal
 
 Keep a single Flutter/Dart codebase for the three target platforms. Split the app into presentation, domain, local-data, and optional remote-data layers. Personal productivity should not depend on an account or a network.
 
-For the initial local milestone, use a feature-oriented structure, with Flutter Material 3 UI, Riverpod for application state, `go_router` for real section navigation, and SQLite via Drift for persisted personal data and versioned migrations. Keep interfaces between repositories and UI/domain code so future remote synchronization cannot replace local source-of-truth behavior. Model persisted entities with stable IDs and timestamps; record sessions as append-oriented events so interrupted sessions and future sync retries can be understood without silently overwriting newer data. Timer state should store the session's wall-clock anchor and paused accumulated duration for restart recovery, while using monotonic elapsed measurements within a running process. Persist task, note, habit, preference, and session data locally before adding sync.
-
-Do not add the database, routing, or state packages until their first real milestone needs them; this bootstrap deliberately has zero third-party Dart packages.
+For local persistence, FlowState uses SQLite through Drift, with a feature-level data layer and versioned migrations. A session stores a wall-clock run anchor plus accumulated paused duration for restart recovery, while the UI timer uses monotonic elapsed measurements during each run. Task and session repositories isolate the UI from persistence. Section navigation is currently simple local state; broader routing/state packages are deferred until needed. No remote backend is required for personal productivity.
 
 ### Milestones
 
 - [x] Milestone 0 — inspect workspace/toolchain; assess Focus Lock and zero-cost backend options; record risks and architecture.
 - [x] Milestone 1A — responsive shell and tested stopwatch model (Flutter dependencies, analysis, tests, and Windows debug launch verified).
-- [ ] Milestone 1B — database, migrations, recoverable sessions, and functional home/tasks/focus screens.
+- [ ] Milestone 1B — implementation and automated tests are in place; pending native Windows build/runtime verification after Developer Mode enables symlinks.
 - [ ] Milestone 1C — local habits, notes, insights, settings, data export, and offline tests.
 - [ ] Milestone 2 — optional identities, friends, private rooms, authorization, realtime sessions and background sync.
 - [ ] Milestone 3 — opt-in Chromium website-blocking extension; assess platform-specific native integrations only where users can configure them safely.
@@ -65,7 +63,7 @@ Source: [Supabase official pricing](https://supabase.com/pricing), [official bil
 
 ## Run and test
 
-The local Flutter SDK is kept in ignored `.tooling/flutter/`. On a Windows terminal with `flutter` on PATH, run:
+The local Flutter SDK is kept in ignored `.tooling/flutter/`. On Windows, enable Developer Mode to permit Flutter to create the native plugin symlinks required by Drift/SQLite, then run from a terminal with `flutter` on PATH:
 
 ```sh
 flutter pub get
@@ -82,7 +80,11 @@ In the checked Git Bash host, the Flutter `.bat` shim does not return; the equiv
   .tooling/flutter/bin/cache/flutter_tools.snapshot <command>
 ```
 
-`pub get` succeeded, analysis is clean after removing an unused import and repairing generated config, and all five timer unit tests passed. The Windows runner built and ran successfully with the confirmed Visual Studio C++ workload and Windows SDK. The first live launch revealed a `ListTile` ink-layer assertion and a short-height layout overflow; both were corrected before the final relaunch, which logged neither issue. The tests establish timer-model lifecycle behavior only; the app is still in-memory and has no persistence, crash recovery, or Focus Lock.
+## Milestone 1B verification (current working checkpoint)
+
+Using Flutter 3.47.8/Dart 3.13.7 from ignored `.tooling/flutter/`: `dart format` completed; `flutter analyze` reported no issues; `flutter test` passed all 15 tests (seven stopwatch model/restore tests, seven SQLite repository/session tests, and one schema migration test). Tests verify task CRUD, date/dashboard queries, a real SQLite file close/reopen, session pause/resume, finish/interruption distinction, clock rollback clamping, active-session recovery after closing/reopening the database, and a v1→v2 data-preserving schema migration.
+
+`flutter pub get` succeeded on its latest run. It initially exited 1 after resolving packages because Windows plugin symlink setup requires Developer Mode; a subsequent run succeeded. `flutter build windows --debug` is currently blocked before compilation by `Building with plugins requires symlink support. Please enable Developer Mode`. The settings page was opened but Developer Mode was not changed by the agent. Windows UI/build/runtime, Android, Linux, and release artifacts are **not verified** for this milestone. A first draft of widget smoke tests hung without completing; that test file was removed and is not counted among the passing checks. Use a Windows run after enabling Developer Mode as the last required check before marking 1B complete.
 
 ## Build and distribution roadmap
 
@@ -97,4 +99,4 @@ A free GitHub release can be considered only after actual artifacts build; no re
 
 ## Current verification record
 
-Using Flutter 3.47.8/Dart 3.13.7 installed under ignored `.tooling/`: `flutter pub get` succeeded; `flutter analyze` reported no issues after the unused import and generated analyzer configuration were corrected; `flutter test` passed all five lifecycle tests; the Windows debug app compiled and was observed running after a clean relaunch. No release build or installer/APK was produced. Android device and Linux support remain unverified. Milestone 1B has not begun. Full details are in [PROJECT_STATUS.md](PROJECT_STATUS.md).
+Milestone 1A verification is recorded in [PROJECT_STATUS.md](PROJECT_STATUS.md), with commit `7405c2a`. Milestone 1B's current working checkpoint passes `dart format`, `flutter analyze`, and all 15 automated tests. The Windows debug build is blocked before compilation until Developer Mode permits plugin symlinks; 1B remains in progress. No release build, installer, APK, Android device test, or Linux test is claimed.

@@ -30,8 +30,8 @@ class StopwatchClock implements MonotonicClock {
 /// milestone.
 class FocusTimer {
   FocusTimer({MonotonicClock Function()? clockFactory})
-      : _clockFactory = clockFactory ?? StopwatchClock.new,
-        _clock = (clockFactory ?? StopwatchClock.new)();
+    : _clockFactory = clockFactory ?? StopwatchClock.new,
+      _clock = (clockFactory ?? StopwatchClock.new)();
 
   final MonotonicClock Function() _clockFactory;
   MonotonicClock _clock;
@@ -41,6 +41,17 @@ class FocusTimer {
   bool isRunning = false;
 
   Duration get elapsed => _elapsedBeforeCurrentRun + _clock.elapsed;
+
+  /// Restores a persisted elapsed duration without counting time spent paused.
+  void restore(Duration elapsed, {required bool running}) {
+    _clock.stop();
+    _clock.reset();
+    _clock = _clockFactory();
+    _elapsedBeforeCurrentRun = elapsed.isNegative ? Duration.zero : elapsed;
+    hasStarted = true;
+    isRunning = running;
+    if (running) _clock.start();
+  }
 
   void startOrResume() {
     if (isRunning) return;

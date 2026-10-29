@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'data/flowstate_database.dart';
 import 'focus_timer.dart';
+import 'workspace_screen.dart';
 
 void main() {
   runApp(const FlowStateApp());
@@ -15,7 +17,9 @@ const _violet = Color(0xFFA78BFA);
 const _muted = Color(0xFF9996A5);
 
 class FlowStateApp extends StatelessWidget {
-  const FlowStateApp({super.key});
+  const FlowStateApp({super.key, this.database});
+
+  final FlowStateDatabase? database;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +37,7 @@ class FlowStateApp extends StatelessWidget {
         ),
         fontFamily: 'Segoe UI',
       ),
-      home: const FocusScreen(),
+      home: WorkspaceScreen(database: database),
     );
   }
 }
@@ -71,12 +75,9 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
     if (_isRunning) return;
     setState(() {
       _timer.startOrResume();
-      _ticker ??= Timer.periodic(
-        const Duration(seconds: 1),
-        (_) {
-          if (mounted && _isRunning) setState(() {});
-        },
-      );
+      _ticker ??= Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted && _isRunning) setState(() {});
+      });
     });
   }
 
@@ -181,10 +182,7 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
                     const Expanded(flex: 4, child: _TodayCard()),
                   ],
                 ),
-              if (compact) ...[
-                const SizedBox(height: 16),
-                const _TodayCard(),
-              ],
+              if (compact) ...[const SizedBox(height: 16), const _TodayCard()],
               if (_lastSessionLabel != null) ...[
                 const SizedBox(height: 18),
                 _SessionNotice(label: _lastSessionLabel!),
@@ -236,14 +234,18 @@ class _TopBar extends StatelessWidget {
         if (compact) ...[
           const Icon(Icons.bubble_chart_rounded, color: _violet, size: 25),
           const SizedBox(width: 9),
-          const Text('FlowState',
-              style: TextStyle(fontWeight: FontWeight.w700)),
+          const Text(
+            'FlowState',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
           const Spacer(),
         ] else ...[
           const Icon(Icons.wb_sunny_outlined, size: 17, color: _violet),
           const SizedBox(width: 9),
-          const Text('A little progress is still progress',
-              style: TextStyle(color: _muted, fontSize: 13)),
+          const Text(
+            'A little progress is still progress',
+            style: TextStyle(color: _muted, fontSize: 13),
+          ),
           const Spacer(),
         ],
         const CircleAvatar(
@@ -271,17 +273,22 @@ class _Sidebar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(children: [
-            Icon(Icons.bubble_chart_rounded, color: _violet, size: 26),
-            SizedBox(width: 10),
-            Text('FlowState',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-          ]),
+          const Row(
+            children: [
+              Icon(Icons.bubble_chart_rounded, color: _violet, size: 26),
+              SizedBox(width: 10),
+              Text(
+                'FlowState',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
           const SizedBox(height: 48),
           const _NavItem(
-              icon: Icons.hourglass_bottom_rounded,
-              label: 'Focus',
-              selected: true),
+            icon: Icons.hourglass_bottom_rounded,
+            label: 'Focus',
+            selected: true,
+          ),
           const SizedBox(height: 18),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 11),
@@ -303,8 +310,11 @@ class _Sidebar extends StatelessWidget {
 }
 
 class _NavItem extends StatelessWidget {
-  const _NavItem(
-      {required this.icon, required this.label, this.selected = false});
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    this.selected = false,
+  });
   final IconData icon;
   final String label;
   final bool selected;
@@ -320,12 +330,14 @@ class _NavItem extends StatelessWidget {
         child: ListTile(
           dense: true,
           leading: Icon(icon, size: 19, color: selected ? _violet : _muted),
-          title: Text(label,
-              style: TextStyle(
-                fontSize: 13,
-                color: selected ? Colors.white : _muted,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-              )),
+          title: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              color: selected ? Colors.white : _muted,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
           onTap: () {},
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
           contentPadding: const EdgeInsets.symmetric(horizontal: 11),
@@ -368,22 +380,31 @@ class _FocusCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            const Icon(Icons.bolt_rounded, size: 17, color: _violet),
-            const SizedBox(width: 8),
-            Text(isRunning ? 'FOCUS IN PROGRESS' : 'FOCUS STOPWATCH',
-                style: _eyebrowStyle),
-            const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: const Color(0xFF25242D),
-                borderRadius: BorderRadius.circular(20),
+          Row(
+            children: [
+              const Icon(Icons.bolt_rounded, size: 17, color: _violet),
+              const SizedBox(width: 8),
+              Text(
+                isRunning ? 'FOCUS IN PROGRESS' : 'FOCUS STOPWATCH',
+                style: _eyebrowStyle,
               ),
-              child: Text(isRunning ? 'Active' : 'Local timer',
-                  style: const TextStyle(color: _muted, fontSize: 11)),
-            ),
-          ]),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF25242D),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  isRunning ? 'Active' : 'Local timer',
+                  style: const TextStyle(color: _muted, fontSize: 11),
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 34),
           Center(
             child: Text(
@@ -410,20 +431,23 @@ class _FocusCard extends StatelessWidget {
               Expanded(
                 child: FilledButton.icon(
                   onPressed: isRunning ? onPause : onStart,
-                  icon: Icon(isRunning
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded),
-                  label: Text(isRunning
-                      ? 'Pause'
-                      : hasStarted
-                          ? 'Resume'
-                          : 'Start focus'),
+                  icon: Icon(
+                    isRunning ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  ),
+                  label: Text(
+                    isRunning
+                        ? 'Pause'
+                        : hasStarted
+                        ? 'Resume'
+                        : 'Start focus',
+                  ),
                   style: FilledButton.styleFrom(
                     backgroundColor: _violet,
                     foregroundColor: const Color(0xFF17131F),
                     minimumSize: const Size(0, 48),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(11)),
+                      borderRadius: BorderRadius.circular(11),
+                    ),
                     textStyle: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
@@ -435,8 +459,9 @@ class _FocusCard extends StatelessWidget {
                   onPressed: onFinish,
                   icon: const Icon(Icons.check_rounded),
                   style: IconButton.styleFrom(
-                      backgroundColor: _surfaceRaised,
-                      minimumSize: const Size(48, 48)),
+                    backgroundColor: _surfaceRaised,
+                    minimumSize: const Size(48, 48),
+                  ),
                 ),
                 const SizedBox(width: 4),
                 IconButton(
@@ -471,29 +496,44 @@ class _TodayCard extends StatelessWidget {
         children: [
           const Text('TODAY', style: _eyebrowStyle),
           const SizedBox(height: 20),
-          const Row(children: [
-            _StatIcon(icon: Icons.schedule_rounded),
-            SizedBox(width: 13),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Focus time', style: TextStyle(color: _muted, fontSize: 12)),
-              SizedBox(height: 3),
-              Text('No sessions yet', style: TextStyle(fontSize: 14)),
-            ]),
-          ]),
+          const Row(
+            children: [
+              _StatIcon(icon: Icons.schedule_rounded),
+              SizedBox(width: 13),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Focus time',
+                    style: TextStyle(color: _muted, fontSize: 12),
+                  ),
+                  SizedBox(height: 3),
+                  Text('No sessions yet', style: TextStyle(fontSize: 14)),
+                ],
+              ),
+            ],
+          ),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 15),
             child: Divider(height: 1, color: Color(0xFF302E37)),
           ),
-          const Row(children: [
-            _StatIcon(icon: Icons.checklist_rounded),
-            SizedBox(width: 13),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Tasks completed',
-                  style: TextStyle(color: _muted, fontSize: 12)),
-              SizedBox(height: 3),
-              Text('Ready when you are', style: TextStyle(fontSize: 14)),
-            ]),
-          ]),
+          const Row(
+            children: [
+              _StatIcon(icon: Icons.checklist_rounded),
+              SizedBox(width: 13),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tasks completed',
+                    style: TextStyle(color: _muted, fontSize: 12),
+                  ),
+                  SizedBox(height: 3),
+                  Text('Ready when you are', style: TextStyle(fontSize: 14)),
+                ],
+              ),
+            ],
+          ),
           const SizedBox(height: 20),
           Container(
             padding: const EdgeInsets.all(13),
@@ -527,14 +567,14 @@ class _StatIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: const Color(0xFF292335),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Icon(icon, size: 18, color: _violet),
-      );
+    width: 36,
+    height: 36,
+    decoration: BoxDecoration(
+      color: const Color(0xFF292335),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Icon(icon, size: 18, color: _violet),
+  );
 }
 
 class _SessionNotice extends StatelessWidget {
@@ -543,19 +583,23 @@ class _SessionNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: _surface,
-          borderRadius: BorderRadius.circular(11),
-          border: Border.all(color: const Color(0xFF2B2933)),
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: _surface,
+      borderRadius: BorderRadius.circular(11),
+      border: Border.all(color: const Color(0xFF2B2933)),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.history_rounded, size: 18, color: _violet),
+        const SizedBox(width: 10),
+        Text(
+          'Last session: $label',
+          style: const TextStyle(fontSize: 12, color: _muted),
         ),
-        child: Row(children: [
-          const Icon(Icons.history_rounded, size: 18, color: _violet),
-          const SizedBox(width: 10),
-          Text('Last session: $label',
-              style: const TextStyle(fontSize: 12, color: _muted)),
-        ]),
-      );
+      ],
+    ),
+  );
 }
 
 const _eyebrowStyle = TextStyle(
