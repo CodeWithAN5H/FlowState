@@ -57,14 +57,15 @@ class TasksRepository {
     );
   }
 
-  Future<void> setCompleted(Task task, bool completed) async {
+  Future<void> setCompleted(Task task, bool completed, {DateTime? now}) async {
+    final at = now ?? DateTime.now();
     await (_database.update(
       _database.tasks,
     )..where((row) => row.id.equals(task.id))).write(
       TasksCompanion(
         isCompleted: Value(completed),
-        completedAt: Value(completed ? DateTime.now() : null),
-        updatedAt: Value(DateTime.now()),
+        completedAt: Value(completed ? at : null),
+        updatedAt: Value(at),
       ),
     );
   }

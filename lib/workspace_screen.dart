@@ -662,119 +662,27 @@ class _TasksPage extends StatelessWidget {
   final Stream<List<Task>> taskStream;
 
   Future<void> _edit(BuildContext context, {Task? task}) async {
-    final titleController = TextEditingController(text: task?.title ?? '');
-    final descriptionController = TextEditingController(
-      text: task?.description ?? '',
-    );
-    var priority = task?.priority ?? 0;
-    var dueAt = task?.dueAt;
-    final result = await showDialog<bool>(
+    final draft = await showDialog<_TaskDraft>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(task == null ? 'New task' : 'Edit task'),
-          content: SizedBox(
-            width: 420,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: titleController,
-                    autofocus: true,
-                    maxLength: 200,
-                    decoration: const InputDecoration(
-                      labelText: 'Task name',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: descriptionController,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'Description (optional)',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  DropdownButtonFormField<int>(
-                    initialValue: priority,
-                    decoration: const InputDecoration(
-                      labelText: 'Priority',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 0, child: Text('Normal')),
-                      DropdownMenuItem(value: 1, child: Text('High')),
-                      DropdownMenuItem(value: 2, child: Text('Urgent')),
-                    ],
-                    onChanged: (value) =>
-                        setDialogState(() => priority = value ?? 0),
-                  ),
-                  const SizedBox(height: 8),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.event_outlined),
-                    title: Text(
-                      dueAt == null
-                          ? 'No due date'
-                          : 'Due ${_dateLabel(dueAt!)}',
-                    ),
-                    trailing: TextButton(
-                      onPressed: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: dueAt ?? DateTime.now(),
-                          firstDate: DateTime(2000),
-                          lastDate: DateTime(2100),
-                        );
-                        if (picked != null)
-                          setDialogState(() => dueAt = picked);
-                      },
-                      child: const Text('Choose'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (titleController.text.trim().isNotEmpty)
-                  Navigator.pop(context, true);
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
+      builder: (context) => _TaskEditorDialog(task: task),
     );
-    if (result == true) {
-      if (task == null) {
-        await repository.create(
-          title: titleController.text,
-          description: descriptionController.text,
-          dueAt: dueAt,
-          priority: priority,
-        );
-      } else {
-        await repository.updateTask(
-          task,
-          title: titleController.text,
-          description: descriptionController.text,
-          dueAt: dueAt,
-          priority: priority,
-        );
-      }
+    if (draft == null) return;
+    if (task == null) {
+      await repository.create(
+        title: draft.title,
+        description: draft.description,
+        dueAt: draft.dueAt,
+        priority: draft.priority,
+      );
+    } else {
+      await repository.updateTask(
+        task,
+        title: draft.title,
+        description: draft.description,
+        dueAt: draft.dueAt,
+        priority: draft.priority,
+      );
     }
-    titleController.dispose();
-    descriptionController.dispose();
   }
 
   Future<void> _delete(BuildContext context, Task task) async {
@@ -880,6 +788,135 @@ class _TasksPage extends StatelessWidget {
         );
       },
     ),
+  );
+}
+
+class _TaskDraft {
+  const _TaskDraft({
+    required this.title,
+    required this.description,
+    required this.dueAt,
+    required this.priority,
+  });
+
+  final String title;
+  final String description;
+  final DateTime? dueAt;
+  final int priority;
+}
+
+/// Owns its text controllers so they outlive the dialog's closing animation.
+class _TaskEditorDialog extends StatefulWidget {
+  const _TaskEditorDialog({this.task});
+
+  final Task? task;
+
+  @override
+  State<_TaskEditorDialog> createState() => _TaskEditorDialogState();
+}
+
+class _TaskEditorDialogState extends State<_TaskEditorDialog> {
+  late final TextEditingController _titleController = TextEditingController(
+    text: widget.task?.title ?? '',
+  );
+  late final TextEditingController _descriptionController =
+      TextEditingController(text: widget.task?.description ?? '');
+  late int _priority = widget.task?.priority ?? 0;
+  late DateTime? _dueAt = widget.task?.dueAt;
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    if (_titleController.text.trim().isEmpty) return;
+    Navigator.pop(
+      context,
+      _TaskDraft(
+        title: _titleController.text,
+        description: _descriptionController.text,
+        dueAt: _dueAt,
+        priority: _priority,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.task == null ? 'New task' : 'Edit task'),
+    content: SizedBox(
+      width: 420,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _titleController,
+              autofocus: true,
+              maxLength: 200,
+              onSubmitted: (_) => _save(),
+              decoration: const InputDecoration(
+                labelText: 'Task name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _descriptionController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Description (optional)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: _priority,
+              decoration: const InputDecoration(
+                labelText: 'Priority',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: 0, child: Text('Normal')),
+                DropdownMenuItem(value: 1, child: Text('High')),
+                DropdownMenuItem(value: 2, child: Text('Urgent')),
+              ],
+              onChanged: (value) => setState(() => _priority = value ?? 0),
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.event_outlined),
+              title: Text(
+                _dueAt == null ? 'No due date' : 'Due ${_dateLabel(_dueAt!)}',
+              ),
+              trailing: TextButton(
+                onPressed: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: _dueAt ?? DateTime.now(),
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime(2100),
+                  );
+                  if (picked != null) setState(() => _dueAt = picked);
+                },
+                child: const Text('Choose'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(onPressed: _save, child: const Text('Save')),
+    ],
   );
 }
 

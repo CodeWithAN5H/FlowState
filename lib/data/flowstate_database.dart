@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
+import 'package:path_provider/path_provider.dart';
 
 part 'flowstate_database.g.dart';
 
@@ -26,7 +27,18 @@ class FocusSessions extends Table {
 
 @DriftDatabase(tables: [Tasks, FocusSessions])
 class FlowStateDatabase extends _$FlowStateDatabase {
-  FlowStateDatabase() : super(driftDatabase(name: 'flowstate'));
+  FlowStateDatabase()
+    : super(
+        driftDatabase(
+          name: 'flowstate',
+          native: DriftNativeOptions(
+            // Application data belongs in the app support directory, not in the
+            // user's Documents: Documents is protected by Windows Controlled
+            // Folder Access, where SQLite cannot create the database file.
+            databaseDirectory: getApplicationSupportDirectory,
+          ),
+        ),
+      );
 
   FlowStateDatabase.forTesting(super.executor);
 

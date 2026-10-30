@@ -76,8 +76,10 @@ void main() {
 
         final todayTask = (await database.select(database.tasks).get())
             .singleWhere((task) => task.id == today);
-        await tasks.setCompleted(todayTask, true);
+        await tasks.setCompleted(todayTask, true, now: now);
         expect(await tasks.completedToday(now), 1);
+        // A completion stamped outside the queried day must not be counted.
+        expect(await tasks.completedToday(now.add(const Duration(days: 1))), 0);
       },
     );
 

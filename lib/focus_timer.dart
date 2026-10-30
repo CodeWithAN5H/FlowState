@@ -26,8 +26,8 @@ class StopwatchClock implements MonotonicClock {
 /// Tracks an in-memory focus stopwatch independently of UI refresh intervals.
 ///
 /// The elapsed value comes from a monotonic clock, not periodic counter
-/// decrements. Persistence and recovery are intentionally left for a later
-/// milestone.
+/// decrements. The workspace restores an elapsed duration from the locally
+/// stored session; persistence itself lives in the data layer.
 class FocusTimer {
   FocusTimer({MonotonicClock Function()? clockFactory})
     : _clockFactory = clockFactory ?? StopwatchClock.new,
