@@ -1,7 +1,7 @@
 # FlowState — Project Status
 
 **Status date:** 2026-11-01
-**Current phase:** Milestones 0, 1A, 1B, and 1C are complete. Milestone 1C was implemented from the local 1B commit and verified on Windows.
+**Current phase:** Milestones 0, 1A, 1B, and 1C are complete; Milestone 1C is merged with `origin/main` and pushed. Milestone 2 is planned in [docs/MILESTONE_2_PLAN.md](docs/MILESTONE_2_PLAN.md) but **not started**.
 **Starting baseline:** commit `812f8d3` (`Milestone 1B partial: add offline data and task workflows`), branch `main`, clean tree matching `origin/main`.
 **Milestone 1B boundary:** local SQLite with migrations, session persistence/recovery, persistent task CRUD, saved-data Home dashboard, and existing timer integration. Offline only. Accounts, cloud sync, study rooms, Focus Lock, habits/notes/settings, and release artifacts are out of scope.
 
@@ -39,7 +39,7 @@ Visual Studio 2022 Community is present; `vswhere` confirms the Native Desktop w
 - Home, Tasks, and Focus navigation is functional, responsive, and local. Timer state continues to use the monotonic `FocusTimer` during a run, with persisted wall-clock anchors and accumulated paused duration for restart recovery.
 - Milestone 1B has passed native Windows build/runtime verification with Developer Mode enabled. The debug build compiles, the app starts into the Home dashboard with no error state, and an on-device integration test drives task creation/completion and a full focus session, then confirms the data survives a restart.
 - Verification found and fixed two real runtime defects: the SQLite file was created in `Documents`, which Windows Controlled Folder Access blocks (startup showed `SqliteException(14)`), and the task editor disposed its text controllers during the dialog's closing animation. The 16-test suite now includes a widget regression test for the editor lifecycle.
-- Habits, notes, insights, preferences, notification delivery, export, accounts, sync, study rooms, and Focus Lock remain unimplemented and are outside this milestone.
+- Habits, notes, insights, settings, and JSON backup/restore are implemented in Milestone 1C (§6); notification delivery, accounts, sync, study rooms, CSV export, and Focus Lock remain unimplemented.
 - Windows and Android runner scaffolding was generated; the local Flutter SDK is under ignored `.tooling/`. The Flutter `.bat` shim hangs in this Git Bash environment; the successful verification and Windows launch used the direct SDK tool-snapshot invocation documented in README.
 - Focus Lock remains a high-risk, separately scoped future feature. A Chromium extension would limit rules to compatible browsers and be user-removable in ordinary configurations. Android Accessibility is only a transparent, opt-in, best-effort focus aid for an ordinary user app, not a reliable OS-enforced app lock; permissions, lifecycle limits, user bypasses, and store policy all need further validation.
 - Supabase is documented only as a candidate optional backend; no service has been integrated or configured.
@@ -77,7 +77,7 @@ Milestone 1B is complete. Android device testing, Linux builds, release builds, 
 
 ## 6. Milestone 1C completion
 
-Work started from commit `2a51609` (`Milestone 1B: verify Windows runtime and fix data path and dialog lifecycle`). The project owner reset the local `main` branch to that commit and asked for no pull, merge, rebase, or any other synchronization with `origin/main`, so the two newer remote commits were deliberately left unintegrated and Milestone 1C was implemented on top of the local 1B code.
+Work started from commit `2a51609` (`Milestone 1B: verify Windows runtime and fix data path and dialog lifecycle`). The project owner reset the local `main` branch to that commit and asked for no pull, merge, rebase, or any other synchronization with `origin/main`, so the two newer remote commits were deliberately left unintegrated and Milestone 1C was implemented on top of the local 1B code. Those two lines were later reconciled with a real merge commit; see §7.
 
 ### Schema (v3)
 
@@ -109,6 +109,25 @@ Work started from commit `2a51609` (`Milestone 1B: verify Windows runtime and fi
 - Home still shows focus and task statistics only; habit progress and recent notes are not on the dashboard.
 - Notes are stored as plain text with Markdown untouched; nothing is rendered.
 - Android device testing, Linux builds, release builds, installers, and the APK remain unverified; the Android SDK is absent from this machine.
-- Git: the local `main` branch is two commits behind `origin/main` by instruction, so `git push origin main` was rejected as non-fast-forward. Nothing was pulled, merged, rebased, reset, or force-pushed; Milestone 1C commits exist locally only.
+- Git: the earlier local/remote divergence is resolved. Both Milestone 1C histories are merged in `3c3673d`, pushed, and `main` equals `origin/main`; see §7.
 
-Milestone 1C is complete for the local codebase: habits, notes, insights, settings, and backup/restore are implemented, tested, built, launched, and exercised through on-device Windows integration tests. Its commits are not on the remote because of the intentional local divergence described above.
+Milestone 1C is complete: habits, notes, insights, settings, and backup/restore are implemented, tested, built, launched, and exercised through on-device Windows integration tests. Both its local and remote histories are merged in `3c3673d`, which is pushed, so `main` and `origin/main` are identical.
+
+## 7. Milestone 1C merge and repository synchronization
+
+On 2026-11-01 the two independently developed Milestone 1C lines were reconciled with an explicit merge commit, `3c3673da1378a6f95dc1e1fd90391659a543f4fa` (`Merge origin/main into main`), whose parents are the local tip `39e4a0e` and the remote tip `3929e00`. No commit was rebased, squashed, reset, cherry-picked, or force-pushed, both histories are ancestors of the merge, and the result was pushed with a normal fast-forward update (`3929e00..3c3673d`). `git rev-parse HEAD` and `git rev-parse origin/main` both resolve to `3c3673d`, and the working tree is clean.
+
+Thirteen files conflicted because each branch implemented Milestone 1C independently. They were resolved file by file rather than with a blanket ours/theirs rule:
+
+- **Kept local:** `lib/data/backup_service.dart` (validated replace-only restore with an automatic safety backup and an `inspect()` preview), the habit, insight, note, and settings repositories, `lib/data/flowstate_database.dart`, and the five conflicting test files that exercise that API. This is the implementation the UI pages, widget tests, and integration tests call.
+- **Regenerated:** `lib/data/flowstate_database.g.dart` was rebuilt with `build_runner` from the retained schema instead of being hand-merged.
+- **Kept from remote:** the optional `now` parameter on `TasksRepository.create`, and the Windows plugin registrations for `file_selector`, which both branches needed.
+- **Dropped:** the remote-only `async` dependency, which the retained code does not use.
+
+Verification was re-run with the merge applied and before the merge commit existed: `dart format` reported no changes, `flutter analyze` reported no issues, `flutter test` passed all 45 tests, `flutter build windows --debug` succeeded, and both Windows integration tests passed.
+
+### Schema reconciliation caveat
+
+The two branches described habits and notes slightly differently. The local definitions were retained: `habits.details` (the remote branch used `description`) and `notes.title` without a length cap. The remote-only column definitions were **not** migrated, because nothing in the repository, the on-disk database, or the backup format depends on them: the only real database here has been migrated by the retained schema, and the versioned JSON format maps to the retained columns. A speculative migration was therefore deliberately not written.
+
+This is a real compatibility limit rather than a cosmetic detail. A database created by the discarded remote build also reports `user_version = 3`, but its `habits` table has `description` and no `details`, so the retained code would fail on the missing column instead of opening it. Should such a database ever appear, a targeted v3 compatibility migration would be required first. No such database is known to exist today.

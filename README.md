@@ -29,7 +29,7 @@ For local persistence, FlowState uses SQLite through Drift, with a feature-level
 - [x] Milestone 0 — inspect workspace/toolchain; assess Focus Lock and zero-cost backend options; record risks and architecture.
 - [x] Milestone 1A — responsive shell and tested stopwatch model (Flutter dependencies, analysis, tests, and Windows debug launch verified).
 - [x] Milestone 1B — local SQLite with migrations, recoverable sessions, persistent task CRUD, saved-data Home dashboard, and timer integration; verified by 16 automated tests and a Windows on-device integration test.
-- [x] Milestone 1C — local habits, notes, insights, settings, and versioned JSON backup/restore; verified by 45 automated tests, a Windows debug build and launch, and two on-device Windows integration tests.
+- [x] Milestone 1C — local habits, notes, insights, settings, and versioned JSON backup/restore; verified by 45 automated tests, a Windows debug build and launch, and two on-device Windows integration tests. Local and remote Milestone 1C were merged and pushed in `3c3673d`.
 - [ ] Milestone 2 — optional identities, friends, private rooms, authorization, realtime sessions and background sync.
 - [ ] Milestone 3 — opt-in Chromium website-blocking extension; assess platform-specific native integrations only where users can configure them safely.
 - [ ] Milestone 4 — research and, if policy and device testing support it, an opt-in Android Accessibility focus-friction prototype.
@@ -57,9 +57,9 @@ Research references: [Android Accessibility service](https://developer.android.c
 
 ### Optional backend assessment
 
-Personal productivity stays local and useful with no backend configured. Gravity Index did not identify an appropriate zero-cost service from its catalog; that is not evidence no such service exists. Supabase is worth evaluating for an *optional* room backend: its current official pricing page lists a $0 Free plan with 500 MB database, 50,000 monthly active users, 5 GB egress, 1 GB file storage, 2 million realtime messages/month, 200 concurrent peak realtime connections, and 500,000 Edge Function invocations. Free projects pause after one week of inactivity and are limited to two active projects. Those terms fit a small initial friends-only trial, subject to change; a paused project would delay rooms, never local tasks/timers. Avoid relying on it until current terms, authentication, row-level security, invite authorization, and Flutter client support have been validated. Never ship service-role secrets in an app.
+Personal productivity stays local and useful with no backend configured. Gravity Index did not identify an appropriate zero-cost service from its catalog; that is not evidence no such service exists. Supabase remains the leading *optional* candidate for rooms: its $0 Free plan currently includes a 500 MB database on a 2 GB disk that does not autoscale (the database turns read-only at 95% disk usage), 50,000 monthly active users, 5 GB uncached plus 5 GB cached egress, 1 GB file storage, 2 million realtime messages/month with 200 concurrent peak connections and 256 KB broadcast payloads, 500,000 Edge Function invocations, and at most two active projects. Free projects pause after roughly a week of low activity; data is preserved and restorable for about a year, but the plan includes no automatic backups or point-in-time recovery. Those terms fit a friends-scale trial, subject to change, and a paused project would delay rooms, never local tasks, habits, or timers. Supabase's `anon`/`service_role` API keys are being retired in favour of publishable/secret keys, so client work must use a publishable key and a secret key must never be shipped. Limits, risks, the proposed data model, authorization rules, and the implementation order are in [docs/MILESTONE_2_PLAN.md](docs/MILESTONE_2_PLAN.md); nothing is integrated yet, and the free tier is not assumed to stay free.
 
-Source: [Supabase official pricing](https://supabase.com/pricing), [official billing and free-tier quotas](https://supabase.com/docs/guides/platform/billing-on-supabase). This is a documented candidate, not an integrated backend or a promise that the free tier will always suit the project.
+Source: [Supabase official pricing](https://supabase.com/pricing), [free project pausing](https://supabase.com/docs/guides/platform/free-project-pausing), [realtime limits](https://supabase.com/docs/guides/realtime/limits), [row level security](https://supabase.com/docs/guides/database/postgres/row-level-security), [JWT claims](https://supabase.com/docs/guides/auth/jwts). This is a documented candidate, not an integrated backend or a promise that the free tier will always suit the project.
 
 ## Run and test
 
@@ -108,6 +108,10 @@ Using Flutter 3.47.8/Dart 3.13.7 from ignored `.tooling/flutter/`:
 
 Backups are written wherever the user chooses in the save dialog, and a safety backup of the current data is stored under the app support directory before any restore replaces data. Restoring replaces all local records; merging is not supported and is labelled as such.
 
+## Milestone 2 plan
+
+Milestone 2 (optional identities, friends, private rooms, realtime presence, and background synchronization) is planned but **not started**; no Milestone 2 code, schema, dependency, or backend exists. The plan — Supabase evaluation and free-tier risks, remote and local data models, authorization rules, conflict handling, integrity rules for competitive statistics, testing strategy, and phase order — lives in [docs/MILESTONE_2_PLAN.md](docs/MILESTONE_2_PLAN.md) and is not duplicated here.
+
 ## Build and distribution roadmap
 
 Release artifacts are **not yet generated**. Once the product and its data behavior are implemented and Flutter toolchains exist:
@@ -121,8 +125,8 @@ A free GitHub release can be considered only after actual artifacts build; no re
 
 ## Current verification record
 
-Milestone 1A verification is recorded in [PROJECT_STATUS.md](PROJECT_STATUS.md), with commit `7405c2a`. Milestone 1B passed `dart format`, `flutter analyze`, all 16 of its automated tests, the Windows debug build, and an on-device Windows integration test, and the built app was observed running with persisted data surviving a restart. Milestone 1C passes the same checks with 45 automated tests, a Windows debug build, a launch of the built app, an on-disk schema v3 migration, and two on-device Windows integration tests, recorded under commit `4228eb3`.
+Milestone 1A verification is recorded in [PROJECT_STATUS.md](PROJECT_STATUS.md), with commit `7405c2a`. Milestone 1B passed `dart format`, `flutter analyze`, all 16 of its automated tests, the Windows debug build, and an on-device Windows integration test, and the built app was observed running with persisted data surviving a restart. Milestone 1C passes the same checks with 45 automated tests, a Windows debug build, a launch of the built app, an on-disk schema v3 migration, and two on-device Windows integration tests, recorded under commits `4228eb3` and `39e4a0e`.
 
-The local `main` branch is two commits behind `origin/main` at the project owner's request, so `git push` is rejected as non-fast-forward until that divergence is resolved. Nothing was force-pushed and no remote commits were merged.
+Local and remote Milestone 1C were reconciled on 2026-11-01 with a real merge commit, `3c3673da1378a6f95dc1e1fd90391659a543f4fa` (`Merge origin/main into main`), whose parents are the local tip `39e4a0e` and the remote tip `3929e00`. Nothing was rebased, squashed, cherry-picked, or force-pushed; both histories are preserved and the result was pushed normally (`3929e00..3c3673d`). Local `main` and `origin/main` now point at that commit. Formatting, analysis, all 45 tests, the Windows debug build, and both Windows integration tests were re-run with the merge applied and passed. The schema reconciliation caveat is recorded in [PROJECT_STATUS.md](PROJECT_STATUS.md) §7.
 
 No release build, installer, APK, Android device test, or Linux test is claimed.
