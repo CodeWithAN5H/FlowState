@@ -2,7 +2,7 @@
 
 **Status:** planned, not started. No Milestone 2 code, schema, dependency, or backend exists yet.
 **Written:** 2026-11-01, after Milestone 1C was merged and pushed as `3c3673d`.
-**Revised:** 2026-11-01 — the offline-time rule in §9 is now explicit (offline sessions are local personal time and never verified), and the fair treatment of offline time in competitive features is deferred with no workaround implemented.
+**Revised:** 2026-11-01 — study-time policy settled for the friends-and-personal stage: sessions recorded offline count as personal study time and towards private friend-group statistics as *self-reported* time, while server observation is recorded as a separate attribute rather than an entry requirement.
 **Scope of this document:** Milestone 2 only. Focus Lock stays in Milestone 3/4, and release artifacts in Milestone 5.
 
 This file is the single source of truth for Milestone 2. `README.md` and `PROJECT_STATUS.md` summarize and link here instead of repeating it.
@@ -18,8 +18,8 @@ These invariants must hold after every phase. A phase that breaks one is not fin
 1. **Local-first, always.** With no network and no account, tasks, habits, notes, the timer, insights, settings, and backup/restore work exactly as they do today. No login gate, no startup network call, no feature removal while signed out.
 2. **Optional by construction.** All remote features sit behind one `RemoteBackend` abstraction. When no backend is configured, the UI omits shared sections or labels them "not configured" — it never errors or blocks.
 3. **Local database stays the source of truth** for personal data. The remote is a synchronization target, never a read path the UI depends on.
-4. **The server decides authorization.** Membership, ownership, invitation validity, and duration eligibility are evaluated server-side; client-supplied user ids, roles, and durations are never trusted.
-5. **Local time is not verified time.** Nothing locally recorded is presented as server-verified competitive time — including a complete focus session performed entirely offline, which stays locally recorded personal study time however plausible its membership and duration look.
+4. **The server decides authorization.** Membership, ownership, and invitation validity are evaluated server-side; client-supplied user ids and roles are never trusted. Study durations are different: they are accepted as self-reported at this stage (§9).
+5. **Recorded time is not observed time.** A session the device recorded is never presented as time the server watched — even after it syncs. Self-reported time may appear in personal and friend-group statistics, and it must be labelled as self-reported wherever it competes with observed time.
 6. **Sync is idempotent and loses nothing.** Every operation is replayable, and a conflict produces a visible resolution rather than a silent overwrite.
 
 ### Three capabilities that stay separate
@@ -82,20 +82,22 @@ All tables live in `public`, have RLS enabled with minimal grants, use `timestam
 - `friend_requests` — `from_user`, `to_user`, `status` (`pending|accepted|declined|cancelled`), timestamps; unique pending pair.
 - `blocks` — `blocker`, `blocked`, `created_at`; enforced symmetrically in policies.
 - `rooms` — `id`, `name`, `owner_id`, `invite_policy` (`owner_only|all_members`), `archived_at`.
-- `room_members` — `(room_id, user_id)`, role `owner|member`, `joined_at`, `removed_at`; membership intervals drive verification (§9).
+- `room_members` — `(room_id, user_id)`, role `owner|member`, `joined_at`, `removed_at`; membership intervals are kept so a reported session can be attributed to a room (§9).
 - `room_invites` — `code_hash`, `room_id`, `created_by`, `max_uses`, `uses`, `expires_at`, `revoked_at`.
 - `room_messages` — `room_id`, `author_id`, `body` (≤500 chars), `created_at`, `deleted_at` (soft delete).
 - `room_sessions` — leader-started schedule: `room_id`, `leader_id`, `mode` (`focus|break`), `starts_at`, `ends_at`. Server timestamps are authoritative.
-- `session_reports` — `room_id`, `user_id`, `local_session_uuid` (unique per user, for idempotency), `started_at`, `ended_at`, `client_duration_ms`, `verified_ms`, `verification` (`verified|clamped|local_only`), `received_at_start`, `received_at_end`.
-- `session_heartbeats` — optional `(session_report_id, at)` rows used to clamp long sessions.
+- `session_reports` — `room_id`, `user_id`, `local_session_uuid` (unique per user, for idempotency), `started_at`, `ended_at`, `client_duration_ms` (the device's claim, always present), `server_observed_ms` (nullable — only set when the backend itself saw the session), `observed_start_at` / `observed_end_at` (nullable), `received_at`. Every row is self-reported unless the observed columns are populated; nothing here is inferred or reconstructed.
+- `session_heartbeats` — optional `(session_report_id, at)` rows recorded while a session runs online. They populate the observed columns for that session and are not used to cap, reject, or repair anything.
 
 Reactions are **ephemeral broadcasts**, not a table: no history, no retention burden, no unbounded growth.
+
+Sync state is **local bookkeeping, not a remote column**: a row arriving at the backend is simply a delivered report, and delivery says nothing about whether the server observed the session.
 
 ## 4. Local schema v4 (additive)
 
 A `schemaVersion` 4 migration adds synchronization bookkeeping without touching existing columns or rows:
 
-- `sync_outbox` — pending operations: entity, local id, operation, payload, revision, attempts, `next_attempt_at`, `last_error`.
+- `sync_outbox` — pending operations: entity, local id, operation, payload, revision, attempts, `next_attempt_at`, `last_error`, `sync_status`.
 - `sync_state` — per-entity cursor and last successful sync time.
 - `remote_links` — local id ↔ remote id, `remote_revision`, `base_revision`.
 - `conflicts` — retained losing values with timestamps, for the conflict UI and for 30-day diagnostics.
@@ -122,7 +124,7 @@ Migration tests must prove v3→v4 preserves every existing row, that UUIDs are 
 - **Removal:** setting `removed_at` immediately invalidates realtime authorization, and the server broadcasts `membership_revoked` so the removed client drops its channel.
 - **Friends:** unique pending pairs, blocked pairs rejected in both directions, and per-user request rate limits (for example 20/day).
 - **Messages:** length and per-minute rate limits enforced in the database, self-delete plus owner delete, no edits in Milestone 2.
-- Every client-supplied identifier is validated against `auth.uid()` and membership before use.
+- Every client-supplied identifier is validated against `auth.uid()` and membership before use. Reported durations are the one deliberately trusted input, and are stored as claims rather than facts (§9).
 
 ## 7. Realtime design
 
@@ -145,33 +147,64 @@ Migration tests must prove v3→v4 preserves every existing row, that UUIDs are 
 - **Failure taxonomy** with distinct UI states: no network, 401 (refresh then sign out), 403 (membership revoked), 409 (conflict), 429 (rate limit), 5xx, and project paused (503). Each is retried or surfaced deliberately — never a silent retry loop.
 - **Bounded queues:** outbox pruning after successful sync, with a size cap so an offline device cannot grow without limit.
 
-## 9. Competitive integrity: local, synced, and verified time
+## 9. Study time: recorded, observed, and synced
 
-- **Class A — local personal time.** Computed on-device, shown on Home and Insights, never uploaded unless sync is enabled, never labelled verified. **This includes fully offline sessions**, which are recorded locally as personal study time and nothing more.
-- **Class B — synced personal time.** Reported with client duration; the server clamps it to the interval it actually observed and flags `clamped` when the client claims more. Shown in the user's own synced totals.
-- **Class C — room/competitive time.** Only sessions the server saw start and end (or heartbeats at ≤60 s), while the user held membership for the whole window. `verified_ms` is the server-observed span capped at the client duration. **Leaderboards aggregate Class C only.**
-- **Fully offline sessions never become verified.** A session performed without a connection to the backend — including one that happens to fall inside a room's scheduled window for a user who holds valid membership — has no server-observed interval, so it is not uploaded as verified, not shown in room statistics, and not counted in any leaderboard. Plausible membership plus a plausible duration does not promote it to Class C: plausibility is not observation.
-- **How offline time should count in future competitive features is deferred.** Excluding it from verification is the honest behaviour available today. Deciding its fair long-term treatment — including whether such sessions deserve partial standing, and how the interface would word that — is future design work. Milestone 2 records offline sessions as Class A and implements no workaround, cap, heuristic, or grandfathering. The option space is described in the deferred section below; none of it is approved.
-- Leaderboard buckets are UTC daily/weekly, displayed in local time with an explicit note; ties break by fewer interruptions. In-app copy states plainly that room rankings count only sessions the server could see, that time recorded while disconnected is excluded, and that rankings prove nothing about how someone studied.
+FlowState is being built for personal use and a private group of friends. At this stage the goal is a trustworthy personal record and an honest shared view among people who already trust each other — not tamper-proof competition. The policy is deliberately simple, and the data model keeps enough structure for stricter rules later.
 
-### Deferred: future options for offline time (discussion only, none approved)
+### 9.1 Personal study time
 
-**Status: DEFERRED.** This list exists so the option space is not lost, not to make a choice. Nothing here is approved, scheduled, prototyped, or partially implemented in Milestone 2, and no code may depend on any of it yet. Whichever option is eventually chosen must pass the failure scenarios in §10 and must disclose its behaviour in the interface; none may label offline time as verified.
+- Sessions recorded on the device count towards personal study statistics and goals, whether they happened online or completely offline.
+- An offline session is saved locally exactly like an online one and reaches the backend when connectivity returns.
+- Personal totals mix both sources freely. The interface may show a quiet breakdown, but nothing is withheld, capped, or queued pending confirmation.
 
-- **Option A — count only server-observed active intervals.** Credit just the heartbeat-attested spans (≤60 s) and drop reconnect gaps instead of inferring them. Cheapest to defend and easiest to explain, at the cost of undercounting users on flaky connections or metered mobile data.
-- **Option B — conservative reconnect reconciliation with strict caps.** Allow a bounded unobserved window on reconnect — for example at most one heartbeat interval per gap and at most a small fixed share of the session total — with the credit applied server-side. Reduces the false zeros of Option A, but adds a trust surface that needs its own tests and a clear statement of what was inferred rather than observed.
-- **Option C — separate verified and unverified categories.** Keep leaderboards on Class C and expose offline sessions in a distinct "offline / unverified" column or tab that is visible without competing. The most transparent option, at the cost of two classes of user and more explanation in the interface.
-- **Considered and set aside: peer or room-leader attestation of an offline session.** It reads as evidence, but it is collusion-prone between friends, so it adds complexity while producing a weaker signal than server observation.
-- **Not an option:** crediting an offline session because its membership and duration merely look plausible. That assumption is exactly the contradiction this policy removes.
+### 9.2 Private friend-group rooms
+
+- A session recorded offline may count towards room statistics and friend-group leaderboards.
+- That time is **self-reported**: it is the device's account of what happened, delivered later. It is counted and displayed, and it is labelled as self-reported wherever it sits alongside server-observed time.
+- No anti-cheat, no plausibility caps, no reconciliation heuristics, and no hold-back queue at this stage. Membership validity and room scoping are still enforced server-side; the duration itself is taken at face value.
+- Server-observed sessions are still recorded as such, because the distinction is cheap to keep now and expensive to reconstruct later.
+
+### 9.3 Future commercial verification (deferred)
+
+If FlowState becomes a commercial product with verified competitive rankings, that is a separate feature with its own policy. Nothing in Milestone 2 promises it, and no Milestone 2 code anticipates it beyond the attribution fields below. The model keeps the distinction because every session already records whether the server observed it, so introducing a stricter mode later is a policy and query change rather than a schema rebuild. The exact commercial policy stays deferred (§9.5).
+
+### 9.4 Three independent attributes
+
+These are unrelated properties, and conflating any two of them is exactly how "synced" gets mistaken for "verified":
+
+| Attribute | Meaning | Where it lives |
+|---|---|---|
+| `local_recorded` | The device recorded the session. True for every session this app produces. | Local `focus_sessions`. |
+| `server_observed` | The backend itself saw the session start/end or received heartbeats during it. | Remote `session_reports.server_observed_ms` and `observed_*` columns; absent for offline sessions. |
+| `sync_status` | Whether the local row has been delivered to the backend (`pending`, `synced`, `failed`). | Local `sync_outbox` / `sync_state` — bookkeeping, never a claim about truth. |
+
+Consequences to state plainly:
+
+- A session can be fully synced and **not** server-observed. That is the ordinary offline case, and it is acceptable for personal and friend-group use.
+- Syncing uploads a claim. It does not prove the person studied during that period.
+- The two attributes are read independently: a synced offline session is `local_recorded = true`, `server_observed = false`, `sync_status = synced`.
+- Display rules: personal totals may combine both with a breakdown; friend-group leaderboards mark self-reported entries; nothing anywhere renders self-reported time as "verified".
+
+### 9.5 Deferred: future commercial verification options (discussion only, none approved)
+
+**Status: DEFERRED.** Recorded so the option space is not lost, not to make a choice. Nothing here is approved, scheduled, prototyped, or partially implemented, and no Milestone 2 code may depend on it.
+
+- **Verified-only rankings.** Rank exclusively on server-observed sessions and exclude self-reported time from the commercial leaderboard, while personal and friend-group views keep counting it.
+- **Two-tier boards.** Show a verified board beside a self-reported board, clearly separated, so nobody has to guess which one they are looking at.
+- **Weighted or gradual promotion.** Give self-reported time partial standing, or promote it once a session has some server-observed overlap — only if a future policy can explain and defend the rule.
+- **Peer or room-leader attestation.** Considered and set aside for now: it reads as evidence but is collusion-prone between friends, so it produces a weaker signal than server observation for more complexity.
+- **Not proposed at any stage:** silently treating self-reported time as verified. The labelling rule in §9.4 exists to prevent exactly that.
+
+The choice among these depends on a commercial decision that has not been made, and any option would need its own tests and disclosure before shipping.
 
 ## 10. Testing strategy and failure scenarios
 
-- **Pure unit tests:** outbox state machine, backoff schedule, revision/conflict decision table, presence expiry, duration clamping, UTC bucket boundaries, invite-code format and hashing.
+- **Pure unit tests:** outbox state machine, backoff schedule, revision/conflict decision table, presence expiry, attribution mapping across all `local_recorded` / `server_observed` / `sync_status` combinations, UTC bucket boundaries, invite-code format and hashing.
 - **Local database tests:** v3→v4 migration and UUID backfill, tombstone round-trip, stable ids across reopen.
 - **Repository contract tests** against a fake backend implementing the same interface: duplicate delivery, out-of-order acknowledgements, 409 conflicts, 429 rate limits, 401 expiry, and simulated project pausing.
 - **Backend authorization matrix** (needs the local Supabase stack): for every table, prove a user cannot read or write another user's rows, a non-member cannot read room data, a removed member loses message access, owner-only operations fail for members, expired/reused invites are rejected, and no secret key exists in client configuration.
 - **Realtime tests:** two clients see presence, messages, and schedule changes; a third non-member is refused; disconnect produces a leave event; removal drops the channel; a network cut followed by reconnect converges to the REST snapshot.
-- **Verification-class tests:** a session with no server observation never reaches Class C, regardless of membership validity or plausible duration; an offline session that started and ended inside a room window stays Class A; leaderboard queries exclude it.
+- **Attribution tests:** an offline session that later syncs stays `server_observed = false` and still appears in friend-group totals, labelled self-reported; `sync_status = synced` never sets or implies observation; a session with heartbeats reports an observed duration independent of the client's claim; no code path caps, rejects, or upgrades a duration.
 - **Explicit failure scenarios:** offline cold start, airplane mode mid-session, app kill during sync, duplicate events, backwards clock change, paused project, revoked membership during a focus session, invite brute force, oversized message, rate limiting.
 - **On-device:** extend the Windows integration tests with a sign-in, room creation, and two-client presence check against the local stack. Android and Linux remain unverified until hardware is available.
 - **Prerequisite:** a Supabase CLI + Docker local stack on this Windows host is unverified. Milestone 2 cannot be honestly verified without either a local stack or a disposable project, so confirm that before starting 2A.
@@ -196,17 +229,18 @@ Each phase is independently shippable, leaves the local app working, and ends wi
 | **2D** Friends | Handle search, requests, accept/decline/cancel, blocks, friend list, rate limits. | Two-account isolation tests pass. |
 | **2E** Private rooms and invitations | Create/rename/archive, hashed single-use invites with expiry and regeneration, join/leave, owner controls, transfer, removal. | Full authorization matrix including non-member, removed member, expired code. |
 | **2F** Realtime room sessions | Presence, member status, independent sessions, server-anchored group schedules, quick reactions, short messages. | Two-client realtime test on Windows; stale presence and reconnect handled. |
-| **2G** Personal sync and conflicts | Opt-in sync, outbox drain, conflict copies, sync status UI, tombstones. | Duplicate/out-of-order/offline tests pass; no silent overwrite demonstrated. |
-| **2H** Competitive statistics | Class C verification, heartbeat clamping, UTC buckets, documented eligibility, in-app disclosure. | Leaderboards aggregate Class C rows only; offline, local-only, and merely plausible sessions are never counted, and no offline-time workaround is built in this phase. |
+| **2G** Personal sync and conflicts | Opt-in sync, outbox drain, conflict copies, sync status UI, tombstones. | Duplicate/out-of-order/offline tests pass; no silent overwrite demonstrated; a synced offline session still reports as not server-observed. |
+| **2H** Study-time attribution and friend-group statistics | Attribution fields populated honestly, labelled self-reported vs observed totals, UTC buckets, disclosure copy in the interface. | Offline and self-reported sessions appear in friend-group statistics and are labelled; no anti-cheat, cap, or reconciliation logic exists. |
 
-**Rationale:** authorization before any client UI (so there is no insecure intermediate state), local schema before sync (so conflicts have somewhere to live), identity before friends, friends before rooms (invites need identity and membership), realtime only after membership authorization is proven, personal sync after the room flow exercises the transport, and competitive statistics last because they depend on verified session data.
+**Rationale:** authorization before any client UI (so there is no insecure intermediate state), local schema before sync (so conflicts have somewhere to live), identity before friends, friends before rooms (invites need identity and membership), realtime only after membership authorization is proven, personal sync after the room flow exercises the transport, and attribution-based statistics last because they read fields the earlier phases populate.
 
 ## 13. Risks and open questions
 
 - Free-tier terms and limits can change; a paused project interrupts rooms but never local use.
 - The key migration from `anon`/`service_role` to publishable/secret keys must be adopted from the first commit.
-- Competitive integrity is inherently approximate; the plan avoids any cheat-proof claim.
+- Friend-group statistics are self-reported by design at this stage. Nothing in the app should imply otherwise, and no anti-cheat claim is made.
+- The distinction between self-reported and server-observed time must survive future refactors; if it is collapsed, commercial verification becomes much harder to add later.
 - Verification remains Windows-only until Linux and Android hardware exist.
-- **Deferred by explicit decision:** the fair treatment of fully offline time in competitive features. Milestone 2 records such time as local personal study time, never verifies it, and implements no workaround (§9).
+- **Deferred:** the commercial verification policy for competitive rankings, and whether self-reported time keeps any standing in it (§9.5).
 - Personal cloud sync is optional and deferred until separately approved: off by default, never implied by creating an account, and never a requirement for local use or for rooms.
 - Open decisions for the project owner: whether personal cloud sync is approved at all (or stays local-only forever), which OAuth provider (if any), whether a disposable Supabase project may be created for testing, and the room-chat retention period.
