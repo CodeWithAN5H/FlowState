@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
 import 'package:flowstate/data/flowstate_database.dart';
+import 'package:flowstate/data/settings_repository.dart';
 import 'package:flowstate/main.dart';
 
 /// Pumps frames until [finder] matches, because the app uses a periodic ticker
@@ -50,6 +51,12 @@ String? statValue(WidgetTester tester, String label) {
       .toList();
   return texts.length > 1 ? texts[1] : null;
 }
+
+/// Editor fields only: the page's own search box is also a [TextField].
+Finder dialogFields() => find.descendant(
+  of: find.byType(AlertDialog),
+  matching: find.byType(TextField),
+);
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -155,5 +162,98 @@ void main() {
     await tester.tap(find.text('Tasks').first);
     await pumpUntil(tester, find.text('COMPLETED · 1'));
     expect(find.text('Write milestone notes'), findsOneWidget);
+  });
+
+  testWidgets('habits, notes, insights and settings persist locally', (
+    tester,
+  ) async {
+    var database = FlowStateDatabase.forTesting(NativeDatabase(databaseFile));
+    addTearDown(() async {
+      await database.close();
+    });
+    await tester.pumpWidget(FlowStateApp(database: database));
+    await pumpUntil(tester, find.text('Today'));
+
+    // Insights report only stored records, so a fresh workspace is empty.
+    await tester.tap(find.text('Insights').first);
+    await pumpUntil(tester, find.text('Nothing measured yet'));
+
+    // A habit can be created and checked in.
+    await tester.tap(find.text('Habits').first);
+    await pumpUntil(tester, find.text('No habits yet'));
+    await tester.tap(find.text('Create a habit'));
+    await pumpUntil(tester, find.byType(AlertDialog));
+    await tester.enterText(dialogFields().first, 'Read 20 pages');
+    await tester.tap(find.text('Save'));
+    await pumpUntilGone(tester, find.byType(AlertDialog));
+    await pumpUntil(tester, find.text('TODAY · 0 OF 1 DONE'));
+    await tester.tap(find.byType(Checkbox).first);
+    await pumpUntil(tester, find.text('TODAY · 1 OF 1 DONE'));
+    expect(
+      await database.select(database.habitCompletions).get(),
+      hasLength(1),
+    );
+
+    // A note saves and can be searched for.
+    await tester.tap(find.text('Notes').first);
+    await pumpUntil(tester, find.text('No notes yet'));
+    await tester.tap(find.text('Write a note'));
+    await pumpUntil(tester, find.byType(AlertDialog));
+    await tester.enterText(dialogFields().first, 'Weekly plan');
+    await tester.enterText(dialogFields().last, 'Ship milestone 1C');
+    await tester.tap(find.text('Save'));
+    await pumpUntilGone(tester, find.byType(AlertDialog));
+    await pumpUntil(tester, find.text('Weekly plan'));
+    await tester.enterText(find.byType(TextField).first, 'nothing matches');
+    await pumpUntil(tester, find.text('No matching notes'));
+    await tester.tap(find.byTooltip('Clear search'));
+    await pumpUntil(tester, find.text('Weekly plan'));
+
+    await tester.tap(find.text('Focus').first);
+    await pumpUntil(tester, find.text('Start focus'));
+    await tester.tap(find.text('Start focus'));
+    await pumpUntil(tester, find.text('Pause'));
+    await tester.pump(const Duration(milliseconds: 1500));
+    await tester.tap(find.byTooltip('Finish session'));
+    await pumpUntil(tester, find.textContaining('Last session: Completed ·'));
+
+    await tester.tap(find.text('Insights').first);
+    await pumpUntilGone(tester, find.text('Nothing measured yet'));
+    await pumpUntil(tester, find.text('This week'));
+    await pumpUntil(tester, find.text('Active habits'));
+
+    // The week-start preference is stored, not just held in memory.
+    await tester.tap(find.text('Settings').first);
+    await pumpUntil(tester, find.text('Week starts on'));
+    await tester.tap(find.text('Sunday'));
+    await pumpUntil(tester, find.text('Sunday'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      (await SettingsRepository(database).load()).weekStart,
+      WeekStart.sunday,
+    );
+
+    // Everything above survives closing and reopening the database file.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 200));
+    await database.close();
+
+    database = FlowStateDatabase.forTesting(NativeDatabase(databaseFile));
+    await tester.pumpWidget(FlowStateApp(database: database));
+    await pumpUntil(tester, find.text('Today'));
+
+    await tester.tap(find.text('Habits').first);
+    await pumpUntil(tester, find.text('Read 20 pages'));
+    expect(tester.widget<Checkbox>(find.byType(Checkbox).first).value, isTrue);
+
+    await tester.tap(find.text('Notes').first);
+    await pumpUntil(tester, find.text('Weekly plan'));
+
+    await tester.tap(find.text('Settings').first);
+    await pumpUntil(tester, find.text('Week starts on'));
+    final segmented = tester.widget<SegmentedButton<WeekStart>>(
+      find.byType(SegmentedButton<WeekStart>),
+    );
+    expect(segmented.selected, {WeekStart.sunday});
   });
 }

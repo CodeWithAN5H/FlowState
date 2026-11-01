@@ -1,10 +1,10 @@
 # FlowState
 
-FlowState is an offline-first productivity and collaborative study app for Windows, Linux, and Android. Development is intentionally incremental. Milestone 1B delivers a dark, responsive Home/Tasks/Focus app with local SQLite storage, persistent tasks, recoverable focus sessions, and dashboard statistics computed from saved records; it was built and exercised on Windows.
+FlowState is an offline-first productivity and collaborative study app for Windows, Linux, and Android. Development is intentionally incremental. Milestone 1B delivers a dark, responsive Home/Tasks/Focus app with local SQLite storage, persistent tasks, recoverable focus sessions, and dashboard statistics computed from saved records; it was built and exercised on Windows. Milestone 1C extends it with local habits, notes, insights, settings, and versioned JSON backup and restore.
 
 ## Current milestone
 
-**Milestones 0, 1A, and 1B are complete. Milestone 1B's persistence, task, session-recovery, and Home-dashboard behavior was verified by automated tests plus an on-device integration test and manual Windows runs.**
+**Milestones 0, 1A, 1B, and 1C are complete. Milestone 1B's persistence, task, session-recovery, and Home-dashboard behavior, and Milestone 1C's habits, notes, insights, settings, and backup/restore were verified by automated tests, an on-device Windows integration test suite, and a real launch of the built app.**
 
 Milestone 1A includes:
 
@@ -16,7 +16,7 @@ Milestone 1A includes:
 
 Milestone 1A was verified in commit `7405c2a`; its Windows debug app was built and observed running. Milestone 1B adds local SQLite persistence, schema v2 migrations, session recovery and lifecycle handling, persistent task CRUD, responsive Home/Tasks/Focus navigation, and dashboard statistics derived from stored sessions/tasks. The app remains offline-first and requires no account or backend.
 
-Milestone 1B is complete and verified on Windows: the debug app builds, starts into the Home dashboard, and the on-device integration test exercises task creation/completion, a start–pause–resume–finish focus session, dashboard statistics, and persistence across a restart against the same database file. Habits, notes, insights, settings, notifications, export, authentication, synchronization, rooms, Focus Lock, and release artifacts remain out of scope or later milestones.
+Milestone 1B is complete and verified on Windows: the debug app builds, starts into the Home dashboard, and the on-device integration test exercises task creation/completion, a start–pause–resume–finish focus session, dashboard statistics, and persistence across a restart against the same database file. Milestone 1C adds habits with real streaks and check-in history, searchable notes, insights computed only from stored rows, practical settings, and versioned JSON backup/restore. Notifications, accounts, synchronization, rooms, CSV export, Focus Lock, and release artifacts remain out of scope or later milestones.
 
 ## Architecture proposal
 
@@ -29,7 +29,7 @@ For local persistence, FlowState uses SQLite through Drift, with a feature-level
 - [x] Milestone 0 — inspect workspace/toolchain; assess Focus Lock and zero-cost backend options; record risks and architecture.
 - [x] Milestone 1A — responsive shell and tested stopwatch model (Flutter dependencies, analysis, tests, and Windows debug launch verified).
 - [x] Milestone 1B — local SQLite with migrations, recoverable sessions, persistent task CRUD, saved-data Home dashboard, and timer integration; verified by 16 automated tests and a Windows on-device integration test.
-- [ ] Milestone 1C — local habits, notes, insights, settings, data export, and offline tests.
+- [x] Milestone 1C — local habits, notes, insights, settings, and versioned JSON backup/restore; verified by 45 automated tests, a Windows debug build and launch, and two on-device Windows integration tests.
 - [ ] Milestone 2 — optional identities, friends, private rooms, authorization, realtime sessions and background sync.
 - [ ] Milestone 3 — opt-in Chromium website-blocking extension; assess platform-specific native integrations only where users can configure them safely.
 - [ ] Milestone 4 — research and, if policy and device testing support it, an opt-in Android Accessibility focus-friction prototype.
@@ -95,6 +95,19 @@ Two real Windows defects were found and fixed during this verification: the data
 
 Android device tests, Linux builds, release builds, installers, and the APK are **not verified** and were not attempted; the Android SDK is absent from this machine. `flutter test -d windows` writes the integration-test entry point into the debug build output, so rebuild with `flutter build windows --debug` before launching the app by hand.
 
+## Milestone 1C verification
+
+Using Flutter 3.47.8/Dart 3.13.7 from ignored `.tooling/flutter/`:
+
+- `dart format --output=none --set-exit-if-changed lib test integration_test` — no changes.
+- `flutter analyze` — **No issues found!**
+- `flutter test` — **all 45 tests passed**, including habits (CRUD, idempotent day check-ins, calendar-day boundaries, streaks, week consistency with both week starts, live stream updates), notes and settings persistence, insights calculations, backup export/restore/validation/reset, v1→v3 and v2→v3 migrations, plus the existing timer, task, session, and editor tests.
+- `flutter build windows --debug` — succeeded (`build/windows/x64/runner/Debug/flowstate.exe`).
+- Launch of the built executable — the process started and stayed running with no exception or error screen in its log; the real database at `%APPDATA%\com.example\flowstate\flowstate.sqlite` was upgraded by that launch to `PRAGMA user_version = 3` with the `habits`, `habit_completions`, `notes`, and `preferences` tables present.
+- `flutter test integration_test/app_flow_test.dart -d windows` — both on-device tests passed: the existing task/focus/restart flow, and a new flow that creates and checks in a habit, saves and searches a note, confirms Insights starts empty and then fills from a real completed session, changes the week-start preference, and reopens the same database file with the habit, note, and preference intact.
+
+Backups are written wherever the user chooses in the save dialog, and a safety backup of the current data is stored under the app support directory before any restore replaces data. Restoring replaces all local records; merging is not supported and is labelled as such.
+
 ## Build and distribution roadmap
 
 Release artifacts are **not yet generated**. Once the product and its data behavior are implemented and Flutter toolchains exist:
@@ -108,4 +121,8 @@ A free GitHub release can be considered only after actual artifacts build; no re
 
 ## Current verification record
 
-Milestone 1A verification is recorded in [PROJECT_STATUS.md](PROJECT_STATUS.md), with commit `7405c2a`. Milestone 1B passes `dart format`, `flutter analyze`, all 16 automated tests, the Windows debug build, and an on-device Windows integration test, and the built app was observed running with persisted data surviving a restart. No release build, installer, APK, Android device test, or Linux test is claimed.
+Milestone 1A verification is recorded in [PROJECT_STATUS.md](PROJECT_STATUS.md), with commit `7405c2a`. Milestone 1B passed `dart format`, `flutter analyze`, all 16 of its automated tests, the Windows debug build, and an on-device Windows integration test, and the built app was observed running with persisted data surviving a restart. Milestone 1C passes the same checks with 45 automated tests, a Windows debug build, a launch of the built app, an on-disk schema v3 migration, and two on-device Windows integration tests, recorded under commit `4228eb3`.
+
+The local `main` branch is two commits behind `origin/main` at the project owner's request, so `git push` is rejected as non-fast-forward until that divergence is resolved. Nothing was force-pushed and no remote commits were merged.
+
+No release build, installer, APK, Android device test, or Linux test is claimed.
