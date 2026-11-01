@@ -2,6 +2,7 @@
 
 **Status:** planned, not started. No Milestone 2 code, schema, dependency, or backend exists yet.
 **Written:** 2026-11-01, after Milestone 1C was merged and pushed as `3c3673d`.
+**Revised:** 2026-11-01 — the offline-time rule in §9 is now explicit (offline sessions are local personal time and never verified), and the fair treatment of offline time in competitive features is deferred with no workaround implemented.
 **Scope of this document:** Milestone 2 only. Focus Lock stays in Milestone 3/4, and release artifacts in Milestone 5.
 
 This file is the single source of truth for Milestone 2. `README.md` and `PROJECT_STATUS.md` summarize and link here instead of repeating it.
@@ -18,8 +19,18 @@ These invariants must hold after every phase. A phase that breaks one is not fin
 2. **Optional by construction.** All remote features sit behind one `RemoteBackend` abstraction. When no backend is configured, the UI omits shared sections or labels them "not configured" — it never errors or blocks.
 3. **Local database stays the source of truth** for personal data. The remote is a synchronization target, never a read path the UI depends on.
 4. **The server decides authorization.** Membership, ownership, invitation validity, and duration eligibility are evaluated server-side; client-supplied user ids, roles, and durations are never trusted.
-5. **Local time is not verified time.** Nothing locally recorded is presented as server-verified competitive time.
+5. **Local time is not verified time.** Nothing locally recorded is presented as server-verified competitive time — including a complete focus session performed entirely offline, which stays locally recorded personal study time however plausible its membership and duration look.
 6. **Sync is idempotent and loses nothing.** Every operation is replayable, and a conflict produces a visible resolution rather than a silent overwrite.
+
+### Three capabilities that stay separate
+
+These are distinct products with distinct requirements. None of them may become a precondition for another:
+
+1. **Local-first productivity — available to everyone, always.** Tasks, habits, notes, the timer, insights, settings, and backup/restore require no account, no network, and no backend. This is the product, not a degraded mode; it must keep working even if every remote service is unavailable permanently.
+2. **Social rooms — require an account and a connection.** Friends, private rooms, invitations, presence, and shared sessions cannot exist without identity and a live backend. Their absence removes those screens only; it never disables the timer, hides local data, or blocks the app behind a login.
+3. **Personal cloud sync — optional, deferred until separately approved.** Uploading a user's own tasks, habits, notes, and sessions for cross-device restore is a convenience, not a requirement. It stays off by default (phase 2G), it is not implied by creating an account, and it is not a prerequisite for rooms. If it is never approved, FlowState remains complete for a local-only user and for a signed-in room user.
+
+The practical rule for every phase: a signed-out, offline user must see today's application. A signed-in user may see more; they must never need it.
 
 ## 2. Backend evaluation: Supabase
 
@@ -136,11 +147,22 @@ Migration tests must prove v3→v4 preserves every existing row, that UUIDs are 
 
 ## 9. Competitive integrity: local, synced, and verified time
 
-- **Class A — local personal time.** Computed on-device, shown on Home and Insights, never uploaded unless sync is enabled, never labelled verified.
+- **Class A — local personal time.** Computed on-device, shown on Home and Insights, never uploaded unless sync is enabled, never labelled verified. **This includes fully offline sessions**, which are recorded locally as personal study time and nothing more.
 - **Class B — synced personal time.** Reported with client duration; the server clamps it to the interval it actually observed and flags `clamped` when the client claims more. Shown in the user's own synced totals.
 - **Class C — room/competitive time.** Only sessions the server saw start and end (or heartbeats at ≤60 s), while the user held membership for the whole window. `verified_ms` is the server-observed span capped at the client duration. **Leaderboards aggregate Class C only.**
-- Offline room sessions are recorded with `pending_verification`; on sync they qualify only if membership covered the entire claimed window and the duration is plausible (≤4 h), otherwise they stay `local_only`.
-- Leaderboard buckets are UTC daily/weekly, displayed in local time with an explicit note; ties break by fewer interruptions. In-app copy states plainly that room rankings count only sessions the server could see and prove nothing about how someone studied.
+- **Fully offline sessions never become verified.** A session performed without a connection to the backend — including one that happens to fall inside a room's scheduled window for a user who holds valid membership — has no server-observed interval, so it is not uploaded as verified, not shown in room statistics, and not counted in any leaderboard. Plausible membership plus a plausible duration does not promote it to Class C: plausibility is not observation.
+- **How offline time should count in future competitive features is deferred.** Excluding it from verification is the honest behaviour available today. Deciding its fair long-term treatment — including whether such sessions deserve partial standing, and how the interface would word that — is future design work. Milestone 2 records offline sessions as Class A and implements no workaround, cap, heuristic, or grandfathering. The option space is described in the deferred section below; none of it is approved.
+- Leaderboard buckets are UTC daily/weekly, displayed in local time with an explicit note; ties break by fewer interruptions. In-app copy states plainly that room rankings count only sessions the server could see, that time recorded while disconnected is excluded, and that rankings prove nothing about how someone studied.
+
+### Deferred: future options for offline time (discussion only, none approved)
+
+**Status: DEFERRED.** This list exists so the option space is not lost, not to make a choice. Nothing here is approved, scheduled, prototyped, or partially implemented in Milestone 2, and no code may depend on any of it yet. Whichever option is eventually chosen must pass the failure scenarios in §10 and must disclose its behaviour in the interface; none may label offline time as verified.
+
+- **Option A — count only server-observed active intervals.** Credit just the heartbeat-attested spans (≤60 s) and drop reconnect gaps instead of inferring them. Cheapest to defend and easiest to explain, at the cost of undercounting users on flaky connections or metered mobile data.
+- **Option B — conservative reconnect reconciliation with strict caps.** Allow a bounded unobserved window on reconnect — for example at most one heartbeat interval per gap and at most a small fixed share of the session total — with the credit applied server-side. Reduces the false zeros of Option A, but adds a trust surface that needs its own tests and a clear statement of what was inferred rather than observed.
+- **Option C — separate verified and unverified categories.** Keep leaderboards on Class C and expose offline sessions in a distinct "offline / unverified" column or tab that is visible without competing. The most transparent option, at the cost of two classes of user and more explanation in the interface.
+- **Considered and set aside: peer or room-leader attestation of an offline session.** It reads as evidence, but it is collusion-prone between friends, so it adds complexity while producing a weaker signal than server observation.
+- **Not an option:** crediting an offline session because its membership and duration merely look plausible. That assumption is exactly the contradiction this policy removes.
 
 ## 10. Testing strategy and failure scenarios
 
@@ -149,6 +171,7 @@ Migration tests must prove v3→v4 preserves every existing row, that UUIDs are 
 - **Repository contract tests** against a fake backend implementing the same interface: duplicate delivery, out-of-order acknowledgements, 409 conflicts, 429 rate limits, 401 expiry, and simulated project pausing.
 - **Backend authorization matrix** (needs the local Supabase stack): for every table, prove a user cannot read or write another user's rows, a non-member cannot read room data, a removed member loses message access, owner-only operations fail for members, expired/reused invites are rejected, and no secret key exists in client configuration.
 - **Realtime tests:** two clients see presence, messages, and schedule changes; a third non-member is refused; disconnect produces a leave event; removal drops the channel; a network cut followed by reconnect converges to the REST snapshot.
+- **Verification-class tests:** a session with no server observation never reaches Class C, regardless of membership validity or plausible duration; an offline session that started and ended inside a room window stays Class A; leaderboard queries exclude it.
 - **Explicit failure scenarios:** offline cold start, airplane mode mid-session, app kill during sync, duplicate events, backwards clock change, paused project, revoked membership during a focus session, invite brute force, oversized message, rate limiting.
 - **On-device:** extend the Windows integration tests with a sign-in, room creation, and two-client presence check against the local stack. Android and Linux remain unverified until hardware is available.
 - **Prerequisite:** a Supabase CLI + Docker local stack on this Windows host is unverified. Milestone 2 cannot be honestly verified without either a local stack or a disposable project, so confirm that before starting 2A.
@@ -174,7 +197,7 @@ Each phase is independently shippable, leaves the local app working, and ends wi
 | **2E** Private rooms and invitations | Create/rename/archive, hashed single-use invites with expiry and regeneration, join/leave, owner controls, transfer, removal. | Full authorization matrix including non-member, removed member, expired code. |
 | **2F** Realtime room sessions | Presence, member status, independent sessions, server-anchored group schedules, quick reactions, short messages. | Two-client realtime test on Windows; stale presence and reconnect handled. |
 | **2G** Personal sync and conflicts | Opt-in sync, outbox drain, conflict copies, sync status UI, tombstones. | Duplicate/out-of-order/offline tests pass; no silent overwrite demonstrated. |
-| **2H** Competitive statistics | Class C verification, heartbeat clamping, UTC buckets, documented eligibility, in-app disclosure. | Leaderboards show verified rows only; local-only sessions never counted. |
+| **2H** Competitive statistics | Class C verification, heartbeat clamping, UTC buckets, documented eligibility, in-app disclosure. | Leaderboards aggregate Class C rows only; offline, local-only, and merely plausible sessions are never counted, and no offline-time workaround is built in this phase. |
 
 **Rationale:** authorization before any client UI (so there is no insecure intermediate state), local schema before sync (so conflicts have somewhere to live), identity before friends, friends before rooms (invites need identity and membership), realtime only after membership authorization is proven, personal sync after the room flow exercises the transport, and competitive statistics last because they depend on verified session data.
 
@@ -184,4 +207,6 @@ Each phase is independently shippable, leaves the local app working, and ends wi
 - The key migration from `anon`/`service_role` to publishable/secret keys must be adopted from the first commit.
 - Competitive integrity is inherently approximate; the plan avoids any cheat-proof claim.
 - Verification remains Windows-only until Linux and Android hardware exist.
-- Open decisions for the project owner: whether personal-data sync belongs in Milestone 2 at all or should stay local-forever, which OAuth provider (if any), whether a disposable Supabase project may be created for testing, and the room-chat retention period.
+- **Deferred by explicit decision:** the fair treatment of fully offline time in competitive features. Milestone 2 records such time as local personal study time, never verifies it, and implements no workaround (§9).
+- Personal cloud sync is optional and deferred until separately approved: off by default, never implied by creating an account, and never a requirement for local use or for rooms.
+- Open decisions for the project owner: whether personal cloud sync is approved at all (or stays local-only forever), which OAuth provider (if any), whether a disposable Supabase project may be created for testing, and the room-chat retention period.
