@@ -2,20 +2,29 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'data/backup_service.dart';
 import 'data/flowstate_database.dart';
 import 'data/focus_sessions_repository.dart';
+import 'data/habits_repository.dart';
+import 'data/notes_repository.dart';
+import 'data/settings_repository.dart';
 import 'data/tasks_repository.dart';
 import 'focus_timer.dart';
+import 'habits_page.dart';
+import 'insights_page.dart';
+import 'notes_page.dart';
+import 'settings_page.dart';
+import 'ui.dart';
 
-const _surface = Color(0xFF19191F);
-const _violet = Color(0xFFA78BFA);
-const _muted = Color(0xFF9996A5);
-const _eyebrow = TextStyle(
-  color: _muted,
-  fontSize: 10,
-  letterSpacing: 1.15,
-  fontWeight: FontWeight.w700,
-);
+const _destinations = <(IconData, String)>[
+  (Icons.home_rounded, 'Home'),
+  (Icons.checklist_rounded, 'Tasks'),
+  (Icons.hourglass_bottom_rounded, 'Focus'),
+  (Icons.repeat_rounded, 'Habits'),
+  (Icons.sticky_note_2_rounded, 'Notes'),
+  (Icons.insights_rounded, 'Insights'),
+  (Icons.settings_rounded, 'Settings'),
+];
 
 class WorkspaceScreen extends StatefulWidget {
   const WorkspaceScreen({super.key, this.database});
@@ -32,11 +41,17 @@ class _WorkspaceScreenState extends State<WorkspaceScreen>
   FlowStateDatabase? _database;
   bool _ownsDatabase = false;
   TasksRepository? _tasks;
+  HabitsRepository? _habits;
+  NotesRepository? _notes;
+  SettingsRepository? _settingsRepository;
+  BackupService? _backup;
   Stream<List<Task>>? _taskStream;
+  StreamSubscription<AppSettings>? _settingsSubscription;
   Future<Duration>? _todayFocusTime;
   Future<List<FocusSession>>? _todaySessions;
   FocusSessionsRepository? _sessions;
   Timer? _ticker;
+  AppSettings _settings = const AppSettings();
   int _selected = 0;
   bool _loading = true;
   String? _error;
@@ -55,14 +70,23 @@ class _WorkspaceScreenState extends State<WorkspaceScreen>
       _ownsDatabase = widget.database == null;
       final sessions = FocusSessionsRepository(db);
       final recovered = await sessions.recover();
+      final settings = await SettingsRepository(db).load();
       if (!mounted) {
-        await db.close();
+        if (_ownsDatabase) await db.close();
         return;
       }
       _database = db;
       _tasks = TasksRepository(db);
       _taskStream = _tasks!.watchTasks();
       _sessions = sessions;
+      _habits = HabitsRepository(db);
+      _notes = NotesRepository(db);
+      _settingsRepository = SettingsRepository(db);
+      _backup = BackupService(db);
+      _settings = settings;
+      _settingsSubscription = _settingsRepository!.watch().listen((value) {
+        if (mounted) setState(() => _settings = value);
+      });
       _refreshDashboardStats();
       if (recovered != null) {
         _timer.restore(recovered.elapsed, running: recovered.isRunning);
@@ -70,11 +94,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen>
       }
       setState(() => _loading = false);
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _error = error.toString();
           _loading = false;
         });
+      }
     }
   }
 
@@ -137,7 +162,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen>
     _ticker = null;
     setState(() {
       _timer.finish();
-      _lastSession = 'Completed · ${_durationLabel(session.elapsed)}';
+      _lastSession = 'Completed · ${durationLabel(session.elapsed)}';
       _refreshDashboardStats();
     });
   }
@@ -150,14 +175,31 @@ class _WorkspaceScreenState extends State<WorkspaceScreen>
     _ticker = null;
     setState(() {
       _timer.cancel();
-      _lastSession = 'Interrupted · ${_durationLabel(session.elapsed)}';
+      _lastSession = 'Interrupted · ${durationLabel(session.elapsed)}';
     });
+  }
+
+  /// A restore or reset replaced the rows underneath the UI: drop any live
+  /// timer state and rebuild the streams so nothing stale is shown.
+  void _handleDataReplaced() {
+    _ticker?.cancel();
+    _ticker = null;
+    _timer.cancel();
+    _taskStream = _tasks?.watchTasks();
+    _refreshDashboardStats();
+    _settingsRepository?.load().then((value) {
+      if (mounted) setState(() => _settings = value);
+    });
+    if (mounted) {
+      setState(() => _lastSession = null);
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
+    _settingsSubscription?.cancel();
     if (_ownsDatabase) _database?.close();
     super.dispose();
   }
@@ -169,7 +211,10 @@ class _WorkspaceScreenState extends State<WorkspaceScreen>
         body: Center(child: Text('Opening your local workspace…')),
       );
     }
-    if (_error != null || _tasks == null || _sessions == null) {
+    if (_error != null ||
+        _tasks == null ||
+        _sessions == null ||
+        _database == null) {
       return Scaffold(
         body: Center(
           child: Padding(
@@ -185,18 +230,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen>
 
     final compact = MediaQuery.sizeOf(context).width < 760;
     final page = switch (_selected) {
-      0 => _HomePage(
-        tasks: _tasks!,
-        taskStream: _taskStream!,
-        todayFocusTime: _todayFocusTime!,
-        todaySessions: _todaySessions!,
-        onOpenTasks: () => setState(() => _selected = 1),
-        onOpenFocus: () => setState(() => _selected = 2),
-        timerElapsed: _timer.elapsed,
-        timerRunning: _timer.isRunning,
-      ),
       1 => _TasksPage(repository: _tasks!, taskStream: _taskStream!),
-      _ => _FocusPage(
+      2 => _FocusPage(
         elapsed: _timer.elapsed,
         hasStarted: _timer.hasStarted,
         isRunning: _timer.isRunning,
@@ -205,6 +240,25 @@ class _WorkspaceScreenState extends State<WorkspaceScreen>
         onPause: _pause,
         onFinish: _finish,
         onCancel: _cancel,
+      ),
+      3 => HabitsPage(repository: _habits!, weekStart: _settings.weekStart),
+      4 => NotesPage(repository: _notes!),
+      5 => InsightsPage(database: _database!, settings: _settings),
+      6 => SettingsPage(
+        settings: _settings,
+        repository: _settingsRepository!,
+        backup: _backup!,
+        onDataReplaced: _handleDataReplaced,
+      ),
+      _ => _HomePage(
+        tasks: _tasks!,
+        taskStream: _taskStream!,
+        todayFocusTime: _todayFocusTime!,
+        todaySessions: _todaySessions!,
+        onOpenTasks: () => setState(() => _selected = 1),
+        onOpenFocus: () => setState(() => _selected = 2),
+        timerElapsed: _timer.elapsed,
+        timerRunning: _timer.isRunning,
       ),
     };
 
@@ -223,9 +277,14 @@ class _WorkspaceScreenState extends State<WorkspaceScreen>
       ),
       bottomNavigationBar: compact
           ? NavigationBar(
-              selectedIndex: _selected,
-              onDestinationSelected: (value) =>
-                  setState(() => _selected = value),
+              selectedIndex: _selected <= 3 ? _selected : 4,
+              onDestinationSelected: (value) {
+                if (value < 4) {
+                  setState(() => _selected = value);
+                } else {
+                  _showMoreDestinations();
+                }
+              },
               destinations: const [
                 NavigationDestination(
                   icon: Icon(Icons.home_outlined),
@@ -242,59 +301,88 @@ class _WorkspaceScreenState extends State<WorkspaceScreen>
                   selectedIcon: Icon(Icons.bolt_rounded),
                   label: 'Focus',
                 ),
+                NavigationDestination(
+                  icon: Icon(Icons.repeat_outlined),
+                  selectedIcon: Icon(Icons.repeat_rounded),
+                  label: 'Habits',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.more_horiz_rounded),
+                  label: 'More',
+                ),
               ],
             )
           : null,
     );
   }
+
+  Future<void> _showMoreDestinations() async {
+    final selected = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var index = 4; index < _destinations.length; index++)
+              ListTile(
+                leading: Icon(
+                  _destinations[index].$1,
+                  color: _selected == index ? kViolet : kMuted,
+                  size: 20,
+                ),
+                title: Text(_destinations[index].$2),
+                onTap: () => Navigator.pop(context, index),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null && mounted) setState(() => _selected = selected);
+  }
 }
 
 class _Sidebar extends StatelessWidget {
   const _Sidebar({required this.selected, required this.onSelected});
+
   final int selected;
   final ValueChanged<int> onSelected;
 
   @override
   Widget build(BuildContext context) => Container(
     width: 224,
-    color: const Color(0xFF141418),
+    color: kSidebar,
     padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 27),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Row(
           children: [
-            Icon(Icons.bubble_chart_rounded, color: _violet),
+            Icon(Icons.bubble_chart_rounded, color: kViolet),
             SizedBox(width: 10),
             Text('FlowState', style: TextStyle(fontWeight: FontWeight.w700)),
           ],
         ),
-        const SizedBox(height: 42),
-        for (var index = 0; index < 3; index++)
+        const SizedBox(height: 34),
+        for (var index = 0; index < _destinations.length; index++)
           Padding(
-            padding: const EdgeInsets.only(bottom: 5),
+            padding: const EdgeInsets.only(bottom: 3),
             child: Material(
-              color: selected == index
-                  ? const Color(0xFF292335)
-                  : Colors.transparent,
+              color: selected == index ? kSelected : Colors.transparent,
               borderRadius: BorderRadius.circular(9),
               clipBehavior: Clip.antiAlias,
               child: ListTile(
                 dense: true,
                 leading: Icon(
-                  [
-                    Icons.home_rounded,
-                    Icons.checklist_rounded,
-                    Icons.hourglass_bottom_rounded,
-                  ][index],
+                  _destinations[index].$1,
                   size: 19,
-                  color: selected == index ? _violet : _muted,
+                  color: selected == index ? kViolet : kMuted,
                 ),
                 title: Text(
-                  ['Home', 'Tasks', 'Focus'][index],
+                  _destinations[index].$2,
                   style: TextStyle(
                     fontSize: 13,
-                    color: selected == index ? Colors.white : _muted,
+                    color: selected == index ? Colors.white : kMuted,
                   ),
                 ),
                 onTap: () => onSelected(index),
@@ -306,69 +394,11 @@ class _Sidebar extends StatelessWidget {
         const Spacer(),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 11),
-          child: Text('LOCAL · OFFLINE READY', style: _eyebrow),
+          child: Text('LOCAL · OFFLINE READY', style: kEyebrow),
         ),
       ],
     ),
   );
-}
-
-class _PageFrame extends StatelessWidget {
-  const _PageFrame({
-    required this.title,
-    required this.subtitle,
-    required this.child,
-    this.action,
-  });
-  final String title;
-  final String subtitle;
-  final Widget child;
-  final Widget? action;
-
-  @override
-  Widget build(BuildContext context) {
-    final compact = MediaQuery.sizeOf(context).width < 760;
-    return SingleChildScrollView(
-      padding: EdgeInsets.all(compact ? 20 : 42),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 980),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          style: const TextStyle(
-                            fontSize: 30,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: -0.8,
-                          ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          subtitle,
-                          style: const TextStyle(color: _muted, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (action != null) action!,
-                ],
-              ),
-              const SizedBox(height: 28),
-              child,
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _HomePage extends StatelessWidget {
@@ -382,6 +412,7 @@ class _HomePage extends StatelessWidget {
     required this.timerElapsed,
     required this.timerRunning,
   });
+
   final TasksRepository tasks;
   final Stream<List<Task>> taskStream;
   final Future<Duration> todayFocusTime;
@@ -396,7 +427,7 @@ class _HomePage extends StatelessWidget {
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, now.day);
     final end = start.add(const Duration(days: 1));
-    return _PageFrame(
+    return PageFrame(
       title: 'Today',
       subtitle: 'Make room for what matters.',
       action: TextButton.icon(
@@ -439,7 +470,7 @@ class _HomePage extends StatelessWidget {
                       builder: (_, data) => _StatCard(
                         icon: Icons.schedule_rounded,
                         label: 'Focus time',
-                        value: data.hasData ? _durationLabel(data.data!) : '…',
+                        value: data.hasData ? durationLabel(data.data!) : '…',
                       ),
                     ),
                     _StatCard(
@@ -456,7 +487,7 @@ class _HomePage extends StatelessWidget {
                       ),
                     ),
                   ];
-                  if (narrow)
+                  if (narrow) {
                     return Column(
                       children: [
                         for (final stat in stats)
@@ -466,6 +497,7 @@ class _HomePage extends StatelessWidget {
                           ),
                       ],
                     );
+                  }
                   return Row(
                     children: [
                       for (var i = 0; i < stats.length; i++)
@@ -482,7 +514,7 @@ class _HomePage extends StatelessWidget {
                 },
               ),
               const SizedBox(height: 20),
-              _Panel(
+              Panel(
                 child: InkWell(
                   onTap: onOpenFocus,
                   borderRadius: BorderRadius.circular(16),
@@ -492,7 +524,7 @@ class _HomePage extends StatelessWidget {
                       children: [
                         const Icon(
                           Icons.bolt_rounded,
-                          color: _violet,
+                          color: kViolet,
                           size: 24,
                         ),
                         const SizedBox(width: 14),
@@ -511,17 +543,17 @@ class _HomePage extends StatelessWidget {
                               const SizedBox(height: 3),
                               Text(
                                 timerRunning
-                                    ? _durationLabel(timerElapsed)
+                                    ? durationLabel(timerElapsed)
                                     : 'Your sessions are saved on this device.',
                                 style: const TextStyle(
-                                  color: _muted,
+                                  color: kMuted,
                                   fontSize: 12,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        const Icon(Icons.arrow_forward_rounded, color: _muted),
+                        const Icon(Icons.arrow_forward_rounded, color: kMuted),
                       ],
                     ),
                   ),
@@ -547,21 +579,21 @@ class _HomePage extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               if (snapshot.connectionState == ConnectionState.waiting)
-                const _Panel(
+                const Panel(
                   child: Padding(
                     padding: EdgeInsets.all(18),
                     child: LinearProgressIndicator(),
                   ),
                 )
               else if (due.isEmpty)
-                _Panel(
+                Panel(
                   child: Padding(
                     padding: const EdgeInsets.all(22),
                     child: Row(
                       children: [
                         const Icon(
                           Icons.check_circle_outline_rounded,
-                          color: _violet,
+                          color: kViolet,
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -569,7 +601,7 @@ class _HomePage extends StatelessWidget {
                             allTasks.isEmpty
                                 ? 'Nothing on your list yet. Add a task when you’re ready.'
                                 : 'You’re all caught up for today.',
-                            style: const TextStyle(color: _muted),
+                            style: const TextStyle(color: kMuted),
                           ),
                         ),
                         TextButton(
@@ -581,7 +613,7 @@ class _HomePage extends StatelessWidget {
                   ),
                 )
               else
-                _Panel(
+                Panel(
                   child: Column(
                     children: [
                       for (var index = 0; index < due.length; index++)
@@ -596,7 +628,7 @@ class _HomePage extends StatelessWidget {
               const SizedBox(height: 20),
               const Text(
                 'Your data stays on this device. Focus Lock is not implemented.',
-                style: TextStyle(color: _muted, fontSize: 11),
+                style: TextStyle(color: kMuted, fontSize: 11),
               ),
             ],
           );
@@ -612,11 +644,13 @@ class _StatCard extends StatelessWidget {
     required this.label,
     required this.value,
   });
+
   final IconData icon;
   final String label;
   final String value;
+
   @override
-  Widget build(BuildContext context) => _Panel(
+  Widget build(BuildContext context) => Panel(
     child: Padding(
       padding: const EdgeInsets.all(16),
       child: Row(
@@ -625,10 +659,10 @@ class _StatCard extends StatelessWidget {
             width: 36,
             height: 36,
             decoration: BoxDecoration(
-              color: const Color(0xFF292335),
+              color: kSelected,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(icon, size: 18, color: _violet),
+            child: Icon(icon, size: 18, color: kViolet),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -637,7 +671,7 @@ class _StatCard extends StatelessWidget {
               children: [
                 Text(
                   label,
-                  style: const TextStyle(color: _muted, fontSize: 11),
+                  style: const TextStyle(color: kMuted, fontSize: 11),
                 ),
                 const SizedBox(height: 5),
                 Text(
@@ -658,6 +692,7 @@ class _StatCard extends StatelessWidget {
 
 class _TasksPage extends StatelessWidget {
   const _TasksPage({required this.repository, required this.taskStream});
+
   final TasksRepository repository;
   final Stream<List<Task>> taskStream;
 
@@ -707,7 +742,7 @@ class _TasksPage extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => _PageFrame(
+  Widget build(BuildContext context) => PageFrame(
     title: 'Tasks',
     subtitle: 'A clear list for the things you want to do.',
     action: FilledButton.icon(
@@ -719,38 +754,27 @@ class _TasksPage extends StatelessWidget {
       stream: taskStream,
       builder: (context, snapshot) {
         final tasks = snapshot.data ?? const <Task>[];
-        if (tasks.isEmpty)
-          return const _Panel(
-            child: Padding(
-              padding: EdgeInsets.all(30),
-              child: Center(
-                child: Column(
-                  children: [
-                    Icon(Icons.checklist_rounded, size: 34, color: _violet),
-                    SizedBox(height: 12),
-                    Text(
-                      'Your task list is empty',
-                      style: TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    SizedBox(height: 5),
-                    Text(
-                      'Add a task to make a little progress.',
-                      style: TextStyle(color: _muted),
-                    ),
-                  ],
-                ),
-              ),
+        if (tasks.isEmpty) {
+          return EmptyState(
+            icon: Icons.checklist_rounded,
+            title: 'Your task list is empty',
+            message: 'Add a task to make a little progress.',
+            action: FilledButton.icon(
+              onPressed: () => _edit(context),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Add your first task'),
             ),
           );
+        }
         final open = tasks.where((task) => !task.isCompleted).toList();
         final done = tasks.where((task) => task.isCompleted).toList();
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (open.isNotEmpty) ...[
-              Text('TO DO · ${open.length}', style: _eyebrow),
+              Text('TO DO · ${open.length}', style: kEyebrow),
               const SizedBox(height: 10),
-              _Panel(
+              Panel(
                 child: Column(
                   children: [
                     for (var i = 0; i < open.length; i++)
@@ -767,9 +791,9 @@ class _TasksPage extends StatelessWidget {
             ],
             if (done.isNotEmpty) ...[
               const SizedBox(height: 22),
-              Text('COMPLETED · ${done.length}', style: _eyebrow),
+              Text('COMPLETED · ${done.length}', style: kEyebrow),
               const SizedBox(height: 10),
-              _Panel(
+              Panel(
                 child: Column(
                   children: [
                     for (var i = 0; i < done.length; i++)
@@ -891,7 +915,7 @@ class _TaskEditorDialogState extends State<_TaskEditorDialog> {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.event_outlined),
               title: Text(
-                _dueAt == null ? 'No due date' : 'Due ${_dateLabel(_dueAt!)}',
+                _dueAt == null ? 'No due date' : 'Due ${dateLabel(_dueAt!)}',
               ),
               trailing: TextButton(
                 onPressed: () async {
@@ -961,7 +985,7 @@ class _TaskRow extends StatelessWidget {
                           decoration: task.isCompleted
                               ? TextDecoration.lineThrough
                               : null,
-                          color: task.isCompleted ? _muted : Colors.white,
+                          color: task.isCompleted ? kMuted : Colors.white,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -971,9 +995,9 @@ class _TaskRow extends StatelessWidget {
                           [
                             if (task.description != null) task.description!,
                             if (task.dueAt != null)
-                              'Due ${_dateLabel(task.dueAt!)}',
+                              'Due ${dateLabel(task.dueAt!)}',
                           ].join(' · '),
-                          style: const TextStyle(color: _muted, fontSize: 11),
+                          style: const TextStyle(color: kMuted, fontSize: 11),
                         ),
                       ],
                     ],
@@ -987,7 +1011,7 @@ class _TaskRow extends StatelessWidget {
                 child: Icon(
                   Icons.flag_rounded,
                   size: 17,
-                  color: task.priority == 2 ? const Color(0xFFFF8A80) : _violet,
+                  color: task.priority == 2 ? const Color(0xFFFF8A80) : kViolet,
                 ),
               ),
             if (onEdit != null)
@@ -1004,12 +1028,7 @@ class _TaskRow extends StatelessWidget {
         ),
       ),
       if (divider)
-        const Divider(
-          height: 1,
-          indent: 58,
-          endIndent: 14,
-          color: Color(0xFF302E37),
-        ),
+        const Divider(height: 1, indent: 58, endIndent: 14, color: kDivider),
     ],
   );
 }
@@ -1025,6 +1044,7 @@ class _FocusPage extends StatelessWidget {
     required this.onFinish,
     required this.onCancel,
   });
+
   final Duration elapsed;
   final bool hasStarted;
   final bool isRunning;
@@ -1035,36 +1055,36 @@ class _FocusPage extends StatelessWidget {
   final VoidCallback onCancel;
 
   @override
-  Widget build(BuildContext context) => _PageFrame(
+  Widget build(BuildContext context) => PageFrame(
     title: 'Focus',
     subtitle: 'A little progress is still progress.',
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _Panel(
+        Panel(
           child: Padding(
             padding: const EdgeInsets.all(26),
             child: Column(
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.bolt_rounded, color: _violet),
+                    const Icon(Icons.bolt_rounded, color: kViolet),
                     const SizedBox(width: 8),
                     Text(
                       isRunning ? 'FOCUS IN PROGRESS' : 'FOCUS STOPWATCH',
-                      style: _eyebrow,
+                      style: kEyebrow,
                     ),
                     const Spacer(),
                     Text(
                       isRunning ? 'Active' : 'Offline timer',
-                      style: const TextStyle(color: _muted, fontSize: 11),
+                      style: const TextStyle(color: kMuted, fontSize: 11),
                     ),
                   ],
                 ),
                 const SizedBox(height: 36),
                 Text(
-                  _durationLabel(elapsed),
-                  semanticsLabel: 'Elapsed ${_durationLabel(elapsed)}',
+                  durationLabel(elapsed),
+                  semanticsLabel: 'Elapsed ${durationLabel(elapsed)}',
                   style: const TextStyle(
                     fontFeatures: [FontFeature.tabularFigures()],
                     fontSize: 56,
@@ -1079,7 +1099,7 @@ class _FocusPage extends StatelessWidget {
                       : hasStarted
                       ? 'Paused — resume when you’re ready.'
                       : 'Start when you’re ready.',
-                  style: const TextStyle(color: _muted, fontSize: 13),
+                  style: const TextStyle(color: kMuted, fontSize: 13),
                 ),
                 const SizedBox(height: 30),
                 Row(
@@ -1100,7 +1120,7 @@ class _FocusPage extends StatelessWidget {
                               : 'Start focus',
                         ),
                         style: FilledButton.styleFrom(
-                          backgroundColor: _violet,
+                          backgroundColor: kViolet,
                           foregroundColor: const Color(0xFF17131F),
                           minimumSize: const Size(0, 48),
                         ),
@@ -1116,7 +1136,7 @@ class _FocusPage extends StatelessWidget {
                       IconButton(
                         tooltip: 'Cancel session',
                         onPressed: onCancel,
-                        icon: const Icon(Icons.close_rounded, color: _muted),
+                        icon: const Icon(Icons.close_rounded, color: kMuted),
                       ),
                     ],
                   ],
@@ -1127,16 +1147,16 @@ class _FocusPage extends StatelessWidget {
         ),
         if (lastSession != null) ...[
           const SizedBox(height: 14),
-          _Panel(
+          Panel(
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Row(
                 children: [
-                  const Icon(Icons.history_rounded, color: _violet),
+                  const Icon(Icons.history_rounded, color: kViolet),
                   const SizedBox(width: 10),
                   Text(
                     'Last session: $lastSession',
-                    style: const TextStyle(color: _muted, fontSize: 12),
+                    style: const TextStyle(color: kMuted, fontSize: 12),
                   ),
                 ],
               ),
@@ -1146,34 +1166,9 @@ class _FocusPage extends StatelessWidget {
         const SizedBox(height: 16),
         const Text(
           'Sessions are saved locally. Interrupting a session records it as interrupted; only completed sessions count toward focus statistics. Focus Lock is not implemented.',
-          style: TextStyle(color: _muted, fontSize: 12, height: 1.5),
+          style: TextStyle(color: kMuted, fontSize: 12, height: 1.5),
         ),
       ],
     ),
   );
 }
-
-class _Panel extends StatelessWidget {
-  const _Panel({required this.child});
-  final Widget child;
-  @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    decoration: BoxDecoration(
-      color: _surface,
-      borderRadius: BorderRadius.circular(16),
-      border: Border.all(color: const Color(0xFF2B2933)),
-    ),
-    child: child,
-  );
-}
-
-String _durationLabel(Duration value) {
-  final hours = value.inHours.toString().padLeft(2, '0');
-  final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
-  final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
-  return '$hours:$minutes:$seconds';
-}
-
-String _dateLabel(DateTime date) =>
-    '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
