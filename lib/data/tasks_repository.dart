@@ -15,14 +15,14 @@ class TasksRepository {
             (table) => OrderingTerm.desc(table.createdAt),
           ]))
           .watch();
-
   Future<int> create({
     required String title,
     String? description,
     DateTime? dueAt,
     int priority = 0,
+    DateTime? now,
   }) {
-    final now = DateTime.now();
+    final createdAt = now ?? DateTime.now();
     return _database
         .into(_database.tasks)
         .insert(
@@ -31,8 +31,8 @@ class TasksRepository {
             description: Value(_normalizeDescription(description)),
             dueAt: Value(dueAt),
             priority: Value(priority.clamp(0, 2)),
-            createdAt: now,
-            updatedAt: now,
+            createdAt: createdAt,
+            updatedAt: createdAt,
           ),
         );
   }
