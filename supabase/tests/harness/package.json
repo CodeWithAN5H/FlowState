@@ -1,0 +1,12 @@
+{
+  "name": "flowstate-backend-harness",
+  "private": true,
+  "type": "module",
+  "description": "Runs the FlowState Supabase migrations and security tests against embedded Postgres (PGlite).",
+  "scripts": {
+    "test": "node run.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.14"
+  }
+}

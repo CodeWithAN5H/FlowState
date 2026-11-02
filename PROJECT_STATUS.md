@@ -131,3 +131,42 @@ Verification was re-run with the merge applied and before the merge commit exist
 The two branches described habits and notes slightly differently. The local definitions were retained: `habits.details` (the remote branch used `description`) and `notes.title` without a length cap. The remote-only column definitions were **not** migrated, because nothing in the repository, the on-disk database, or the backup format depends on them: the only real database here has been migrated by the retained schema, and the versioned JSON format maps to the retained columns. A speculative migration was therefore deliberately not written.
 
 This is a real compatibility limit rather than a cosmetic detail. A database created by the discarded remote build also reports `user_version = 3`, but its `habits` table has `description` and no `details`, so the retained code would fail on the missing column instead of opening it. Should such a database ever appear, a targeted v3 compatibility migration would be required first. No such database is known to exist today.
+
+## 8. Milestone 2A backend foundation (2026-11-02)
+
+Milestone 2A is implemented as backend SQL only, under `supabase/`. The Flutter application, its
+`pubspec.yaml`, `lib/`, `test/`, and the local SQLite schema are unchanged; the app still requires no
+account and no network, and nothing is deployed or integrated.
+
+**Schema.** Eight additive migrations create `profiles`, `friendships`, `friend_requests`, `blocks`,
+`rooms`, `room_members`, `room_invites`, `room_messages`, `room_sessions`, `session_reports`,
+`session_heartbeats`, and `invite_attempts`. Row level security is enabled on every table and each
+one is closed to `anon` and `authenticated` before explicit grants are added — several of them
+per-column, so clients cannot read `profiles.last_seen_at`, `room_invites.code_hash`, or any
+`session_reports.server_observed_*` column. A defensive default-privilege migration means a future
+table starts unreadable rather than exposed.
+
+**Authorization.** No client holds INSERT/UPDATE/DELETE on rooms, memberships, invitations,
+friendships, or blocks. Those changes go through `SECURITY DEFINER` functions that derive the caller
+from `auth.uid()` and re-check ownership or membership, because a definer function bypasses RLS. All
+of them pin `search_path` to the empty string with fully-qualified names. Blocks are symmetric and end
+any friendship or pending request; invitation codes are hashed with SHA-256, single-use by default,
+expiring, revocable, atomically redeemed under a row lock, and rate limited against guessing. Room
+messages are member-only, length- and rate-limited, soft-deletable, and not editable. Removing a
+member closes their membership interval immediately and revokes message access.
+
+**Study time.** `session_reports` keeps the plan §9 attributes apart: the device's
+`client_duration_ms` is accepted as-is with no cap or heuristic, the `server_observed_*` columns and
+the generated `is_self_reported` label cannot be written by clients, and sync state is not a remote
+column. An offline session that syncs later is stored, counted in `room_leaderboard()`'s totals, and
+reported as self-reported time with the observed share split out.
+
+**Verification.** Docker and the Supabase CLI are not installed on this machine, so the suite runs
+against PGlite (PostgreSQL 18 in WebAssembly) through `supabase/tests/harness`: all **44 security
+cases pass** across five files — anonymous and cross-user isolation, room and message access,
+membership and ownership controls, invitation reuse/expiry/revocation/rate limiting, friendship and
+block rules, attribution behaviour, and structural checks for RLS, grants, and `search_path` pinning.
+This is real PostgreSQL running the real migrations, but the `auth` schema is a stub, so PostgREST,
+GoTrue sign-in, realtime authorization, and project pausing remain **unverified** until a local
+Supabase stack or disposable project exists. No Supabase account or project was created, nothing was
+deployed, and no credential is stored in the repository.

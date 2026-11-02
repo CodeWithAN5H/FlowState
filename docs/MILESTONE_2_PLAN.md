@@ -1,7 +1,8 @@
 # FlowState — Milestone 2 Plan: Accounts, Friends, Rooms and Synchronization
 
-**Status:** planned, not started. No Milestone 2 code, schema, dependency, or backend exists yet.
+**Status:** phase 2A (backend foundation) implemented and locally verified under `supabase/`; phases 2B–2H are not started. No Flutter code, dependency, or client integration exists yet, and nothing is deployed.
 **Written:** 2026-11-01, after Milestone 1C was merged and pushed as `3c3673d`.
+**Revised:** 2026-11-02 — phase 2A implemented as SQL migrations, RPCs and a security test suite; see §14.
 **Revised:** 2026-11-01 — study-time policy settled for the friends-and-personal stage: sessions recorded offline count as personal study time and towards private friend-group statistics as *self-reported* time, while server observation is recorded as a separate attribute rather than an entry requirement.
 **Scope of this document:** Milestone 2 only. Focus Lock stays in Milestone 3/4, and release artifacts in Milestone 5.
 
@@ -223,7 +224,7 @@ Each phase is independently shippable, leaves the local app working, and ends wi
 
 | Phase | Work | Exit criteria |
 |---|---|---|
-| **2A** Backend foundation (no client change) | Supabase project schema, RLS, revokes, RPCs for invites/ownership/account deletion; local stack running. | Authorization matrix green; app untouched. |
+| **2A** Backend foundation (no client change) — **implemented 2026-11-02** | Supabase schema, RLS, revokes, and RPCs for invites and ownership in `supabase/migrations`. Account deletion moved to 2C, which owns identity. | Authorization matrix green in the local Postgres harness (§14); app untouched. A real Supabase stack remains unverified on this host. |
 | **2B** Local schema v4 + sync scaffolding | UUID columns with backfill, outbox/state/conflict tables, sync interfaces plus a fake backend; migration tests. | All existing tests still pass; no user-visible change. |
 | **2C** Optional identity | Settings → Account, sign-up/in/out, handle claim, account deletion, lazy token handling, offline-safe states. | Signed-out app identical to today; sign-in flow verified on Windows against the local stack. |
 | **2D** Friends | Handle search, requests, accept/decline/cancel, blocks, friend list, rate limits. | Two-account isolation tests pass. |
@@ -244,3 +245,38 @@ Each phase is independently shippable, leaves the local app working, and ends wi
 - **Deferred:** the commercial verification policy for competitive rankings, and whether self-reported time keeps any standing in it (§9.5).
 - Personal cloud sync is optional and deferred until separately approved: off by default, never implied by creating an account, and never a requirement for local use or for rooms.
 - Open decisions for the project owner: whether personal cloud sync is approved at all (or stays local-only forever), which OAuth provider (if any), whether a disposable Supabase project may be created for testing, and the room-chat retention period.
+
+## 14. Milestone 2A implementation record (2026-11-02)
+
+Phase 2A is complete as backend SQL only. `pubspec.yaml`, `lib/`, `test/`, and the local SQLite schema
+are untouched, and nothing is deployed.
+
+**Delivered.** Eight additive migrations in `supabase/migrations/` create `profiles`, `friendships`,
+`friend_requests`, `blocks`, `rooms`, `room_members`, `room_invites`, `room_messages`,
+`room_sessions`, `session_reports`, `session_heartbeats`, and `invite_attempts`. Every table has RLS
+enabled and is closed by default; access is granted per table and often per column. Membership,
+ownership, invitation, friendship, and message rules are enforced by `SECURITY DEFINER` functions
+with a pinned empty `search_path`, each deriving the caller from `auth.uid()`.
+
+**Decisions taken during implementation.**
+
+- `room_sessions` (the leader-started group schedule) is the only schedule entity. The phase brief's
+  `room_schedules` and `room_sessions` are the same thing; a separate running-instance table was not
+  invented.
+- Reporting a session requires a **live** membership at upload time. This is an authorization rule,
+  not a duration check: a session recorded offline for a room the user still belongs to uploads
+  normally, and one for a room they have left is refused while the local record is untouched.
+- `invite_attempts` exists because rate limiting needs a durable record of failures, and failures are
+  returned as outcomes rather than exceptions so the attempt survives the rejection.
+- Account deletion is deferred to 2C. `room_messages.author_id` is nullable with `on delete set
+  null`, so the eventual deletion leaves "deleted user" messages behind.
+- Invite codes are 10 hex characters drawn from `gen_random_uuid()`, stored only as a SHA-256 digest,
+  and returned in plaintext exactly once, which avoids a `pgcrypto` dependency.
+
+**Verification and its limits.** Docker and the Supabase CLI are unavailable on this host, so the
+migrations and 44 security cases were executed against PGlite (PostgreSQL 18 compiled to WebAssembly)
+through `supabase/tests/harness`, with a stub `auth` schema whose `auth.uid()` reads the same
+`request.jwt.claims` setting Supabase uses. The SQL, roles, RLS, grants, constraints, triggers, and
+definer semantics are genuine PostgreSQL; the substitution is the auth layer. This does **not**
+verify PostgREST, GoTrue sign-in, realtime authorization, or project pausing, which still require a
+real local stack or a disposable project.

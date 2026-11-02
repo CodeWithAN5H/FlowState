@@ -36,3 +36,8 @@ migrate_working_dir/
 
 # Widget Preview related
 .widget_preview/
+
+# Backend test harness (Node + PGlite) and Supabase CLI scratch state
+node_modules/
+supabase/.temp/
+supabase/.branches/
