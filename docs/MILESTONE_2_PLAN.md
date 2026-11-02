@@ -1,7 +1,8 @@
 # FlowState — Milestone 2 Plan: Accounts, Friends, Rooms and Synchronization
 
-**Status:** phase 2A (backend foundation) implemented and locally verified under `supabase/`; phases 2B–2H are not started. No Flutter code, dependency, or client integration exists yet, and nothing is deployed.
+**Status:** phases 2A (backend foundation) and 2B (local schema v4 with sync scaffolding) are implemented and locally verified; phases 2C–2H are not started. The app still has no Supabase client, dependency, account, or network call, and nothing is deployed.
 **Written:** 2026-11-01, after Milestone 1C was merged and pushed as `3c3673d`.
+**Revised:** 2026-11-02 — phase 2B implemented as local schema v4 and provider-neutral sync scaffolding; see §16.
 **Revised:** 2026-11-02 — phase 2A implemented as SQL migrations, RPCs and a security test suite; see §14.
 **Revised:** 2026-11-01 — study-time policy settled for the friends-and-personal stage: sessions recorded offline count as personal study time and towards private friend-group statistics as *self-reported* time, while server observation is recorded as a separate attribute rather than an entry requirement.
 **Scope of this document:** Milestone 2 only. Focus Lock stays in Milestone 3/4, and release artifacts in Milestone 5.
@@ -96,15 +97,16 @@ Sync state is **local bookkeeping, not a remote column**: a row arriving at the 
 
 ## 4. Local schema v4 (additive)
 
-A `schemaVersion` 4 migration adds synchronization bookkeeping without touching existing columns or rows:
+**Implemented in 2B; the record is in §16.** A `schemaVersion` 4 migration adds synchronization bookkeeping without touching existing columns or rows:
 
-- `sync_outbox` — pending operations: entity, local id, operation, payload, revision, attempts, `next_attempt_at`, `last_error`, `sync_status`.
-- `sync_state` — per-entity cursor and last successful sync time.
-- `remote_links` — local id ↔ remote id, `remote_revision`, `base_revision`.
-- `conflicts` — retained losing values with timestamps, for the conflict UI and for 30-day diagnostics.
-- `uuid` text column (unique) on `tasks`, `habits`, `notes`, `focus_sessions`, backfilled for existing rows; integer primary keys stay internal.
+- `sync_outbox` — pending operations: unique `operation_id`, entity, entity UUID, operation (`create|update|delete`), JSON payload snapshot, local revision, `created_at`, `attempt_count`, `next_attempt_at`, `last_error_kind`/`last_error_message`, and `status` (`pending|inFlight|failed|acknowledged`). Claim order is the auto-incrementing id, so replay is deterministic.
+- `sync_state` — one row per entity: status, cursor, last successful sync time, last error, consecutive failures, and retry deadline.
+- `remote_links` — unique on `(entity, local_uuid)`, mapping to a remote id with `remote_revision` and `base_revision`. Bookkeeping only: no local record depends on a remote one.
+- `sync_conflicts` — retained local and remote payloads, revisions, an optional field, status and timestamps. Nothing resolves automatically in 2B.
+- `sync_tombstones` — durable deletion records, unique on `(entity, entity_uuid)`, written in the same transaction as a delete so the deletion stays communicable after the row is gone.
+- `uuid` text column on `tasks`, `habits`, `notes`, `focus_sessions`, unique-indexed and backfilled for existing rows; integer primary keys stay internal.
 
-Migration tests must prove v3→v4 preserves every existing row, that UUIDs are stable across reopen, and that a v1/v2 database still reaches v4.
+Migration tests prove v3→v4 preserves every existing row and relation, that UUIDs are stable across reopen, and that a v1/v2 database still reaches v4.
 
 ## 5. Identity and authentication
 
@@ -225,7 +227,7 @@ Each phase is independently shippable, leaves the local app working, and ends wi
 | Phase | Work | Exit criteria |
 |---|---|---|
 | **2A** Backend foundation (no client change) — **implemented 2026-11-02** | Supabase schema, RLS, revokes, and RPCs for invites and ownership in `supabase/migrations`. Account deletion moved to 2C, which owns identity. | Authorization matrix green in the local Postgres harness (§14); app untouched. A real Supabase stack remains unverified on this host. |
-| **2B** Local schema v4 + sync scaffolding | UUID columns with backfill, outbox/state/conflict tables, sync interfaces plus a fake backend; migration tests. | All existing tests still pass; no user-visible change. |
+| **2B** Local schema v4 + sync scaffolding — **implemented 2026-11-02** | UUID columns with backfill, outbox/state/conflict/tombstone tables, sync interfaces plus a fake backend; migration and scaffolding tests. | All existing tests still pass (69 in total); no user-visible change. |
 | **2C** Optional identity | Settings → Account, sign-up/in/out, handle claim, account deletion, lazy token handling, offline-safe states. | Signed-out app identical to today; sign-in flow verified on Windows against the local stack. |
 | **2D** Friends | Handle search, requests, accept/decline/cancel, blocks, friend list, rate limits. | Two-account isolation tests pass. |
 | **2E** Private rooms and invitations | Create/rename/archive, hashed single-use invites with expiry and regeneration, join/leave, owner controls, transfer, removal. | Full authorization matrix including non-member, removed member, expired code. |
@@ -312,3 +314,46 @@ interface exists in the repository today.
   than implying protection.
 
 Phase 2A adds no Focus Lock table, function, column, or UI.
+
+## 16. Milestone 2B implementation record (2026-11-02)
+
+Phase 2B is complete as local schema plus local scaffolding. There is no Supabase client, no HTTP call,
+no account, and no login UI; `pubspec.yaml` is unchanged and the application behaves exactly as it did
+in Milestone 1C.
+
+**Delivered.** Schema v4 with stable UUIDs on tasks, habits, notes, and focus sessions (backfilled in
+SQL during the upgrade, unique-indexed, and minted automatically for new rows); `sync_outbox`,
+`sync_state`, `remote_links`, `sync_conflicts`, and `sync_tombstones`; durable tombstones written
+transactionally by the task, habit, and note delete paths; and — in `lib/data/sync/` — the
+provider-neutral `RemoteBackend` seam, the failure taxonomy, retry backoff, an ordered queue with
+transactional acknowledgement, a single-pass `SyncEngine`, and an in-memory fake backend used only by
+tests.
+
+**Decisions taken during implementation.**
+
+- UUIDs are generated in `lib/data/ids.dart` (RFC 4122 v4 over `Random.secure()`, with a format check)
+  instead of adding the planned `uuid` dependency. The repository gains no new package.
+- Deletions use a tombstone table rather than `deleted_at` columns, so every existing query, backup,
+  and widget test is unchanged while the deletion itself stays communicable. Session records have no
+  delete path in the application, so no session tombstone is produced yet.
+- The `uuid` columns are nullable in SQL — backfilled, uniquely indexed, and always populated by a
+  client default — because adding a `NOT NULL` column without a server default would force a rebuild
+  of four tables inside an upgrade that is meant to be purely additive.
+- Repositories record tombstones but do not enqueue operations. Queue entries are created by the sync
+  layer, and wiring every local write into the outbox belongs to 2G, when sync becomes opt-in and can
+  be switched off without touching the write path.
+- Backup format 1 is preserved: `supportedSchemaVersion` becomes 4, each record now carries its uuid
+  (older files mint new ones on restore), and restore/reset clear the sync tables because they replace
+  the whole local dataset.
+
+**Failure taxonomy.** `SyncFailureKind` distinguishes `offline`, `authenticationRequired` (401),
+`permissionDenied` (403), `conflict` (409), `rateLimited` (429), `serverError` (5xx), `backendPaused`
+(503), and `invalidRequest`. Retryability is a property of the kind, and the queue expresses it through
+`next_attempt_at`: a non-retryable failure gets no deadline and waits for an explicit re-queue instead
+of spinning.
+
+**Verification and its limits.** `dart format` clean, `flutter analyze` clean, `flutter test` 69
+passing (45 existing, 24 new), `flutter build windows --debug` succeeded, and both Windows integration
+tests passed. Android and Linux remain unverified. Nothing is scheduled or networked: `SyncEngine` is
+invoked only by tests, and `RemoteBackend.pull` and conflict resolution remain foundations rather than
+features.

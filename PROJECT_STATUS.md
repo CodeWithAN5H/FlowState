@@ -1,7 +1,7 @@
 # FlowState — Project Status
 
-**Status date:** 2026-11-01
-**Current phase:** Milestones 0, 1A, 1B, and 1C are complete; Milestone 1C is merged with `origin/main` and pushed. Milestone 2 is planned in [docs/MILESTONE_2_PLAN.md](docs/MILESTONE_2_PLAN.md) but **not started**.
+**Status date:** 2026-11-02
+**Current phase:** Milestones 0, 1A, 1B, and 1C are complete and pushed. Milestone 2 is in progress: 2A (backend SQL) and 2B (local schema v4 with sync scaffolding) are implemented and committed, and the app is still fully offline-first — no Supabase client, no dependency, no account, no network call. Phases 2C–2H are planned in [docs/MILESTONE_2_PLAN.md](docs/MILESTONE_2_PLAN.md).
 **Starting baseline:** commit `812f8d3` (`Milestone 1B partial: add offline data and task workflows`), branch `main`, clean tree matching `origin/main`.
 **Milestone 1B boundary:** local SQLite with migrations, session persistence/recovery, persistent task CRUD, saved-data Home dashboard, and existing timer integration. Offline only. Accounts, cloud sync, study rooms, Focus Lock, habits/notes/settings, and release artifacts are out of scope.
 
@@ -200,3 +200,107 @@ Known gaps, reported rather than silently accepted: a user can still create unli
 growth only, no access granted, bounded by friends-scale use); handles can be changed without the
 planned cooldown; and redemption is serialised with `FOR UPDATE` but was not exercised under real
 concurrency, because the harness is single-connection.
+
+## 10. Milestone 2B local schema v4 and sync scaffolding (2026-11-02)
+
+Milestone 2B prepares the local database for a future *optional* sync engine. It adds no network code,
+no Supabase client, no account, and no login UI: the application behaves exactly as it did in Milestone
+1C, and SQLite remains the only source of truth.
+
+### Schema v4
+
+`lib/data/flowstate_database.dart` raises `schemaVersion` to 4. The upgrade is additive — `if (from < 4)`
+adds columns and tables — and no committed migration was rewritten.
+
+- **Stable identifiers.** `tasks`, `habits`, `notes`, and `focus_sessions` gain a `uuid` text column with
+  a Dart-side `clientDefault`, so every new row is minted one automatically. Existing rows are backfilled
+  in SQL during the upgrade, and each table gets an explicitly named unique index
+  (`tasks_uuid_unique`, …) so a migrated database and a freshly created one agree. Integer primary keys
+  are untouched and remain the local keys every query and relation already uses.
+- **`sync_outbox`** — pending operations with a unique `operation_id`, entity, entity UUID, operation
+  (`create|update|delete`), a JSON payload snapshot, local revision, creation time, attempt count,
+  `next_attempt_at`, last error kind/message, and status (`pending|inFlight|failed|acknowledged`). The
+  auto-incrementing `id` is the deterministic order: claims are `ORDER BY id ASC`.
+- **`sync_state`** — one row per entity: status, cursor, last successful sync time, last error,
+  consecutive failures, and retry deadline.
+- **`remote_links`** — unique on `(entity, local_uuid)`, mapping to a remote id with `remote_revision`
+  and `base_revision`. The local record never depends on a remote row; a link is bookkeeping that no
+  local query reads.
+- **`sync_conflicts`** — entity, entity UUID, optional field, local and remote revisions, both payloads
+  verbatim, status, and detection/resolution timestamps. Nothing decides a winner in this milestone.
+- **`sync_tombstones`** — durable deletion records, unique on `(entity, entity_uuid)`.
+
+**Deletion handling.** Deleting a task, habit, or note is still a physical delete, so no existing query
+had to change and no read path can show a deleted row. The same transaction writes a `sync_tombstones`
+row first, so what a backend must be told survives the row itself. Session records have no delete path
+in the application, so no session tombstone is produced yet.
+
+### Sync architecture
+
+`lib/data/sync/` holds the local foundations:
+
+- `remote_backend.dart` — the `RemoteBackend` seam (`push`, `pull`, `isConfigured`) with request/result
+  models. Nothing in `lib/` implements it against a network.
+- `sync_models.dart` — `SyncEntity`, `SyncOperationKind`, `SyncOperationStatus`, and `SyncFailureKind`
+  (`offline`, `authenticationRequired`, `permissionDenied`, `conflict`, `rateLimited`, `serverError`,
+  `backendPaused`, `invalidRequest`), with `SyncFailure.fromHttpStatus` mapping 401/403/409/429/5xx,
+  503 separated as *paused*, and a pure exponential `retryDelayFor` helper (1 s doubling to a 5-minute
+  cap).
+- `sync_store.dart` — `SyncQueue` (enqueue, ordered claim, in-flight marking, transactional
+  acknowledgement, failure recording, explicit re-queue), `SyncMetadataStore` (state, links, conflicts,
+  tombstones), and `recordLocalDeletion`.
+- `sync_engine.dart` — a single-pass `drainOnce()` that pushes queued operations oldest first and stops
+  at the first failure, so a later update for a record is never sent while an earlier operation for it
+  is unacknowledged.
+- `fake_backend.dart` — an in-memory backend with scripted failures, used only by tests.
+
+**Acknowledgement is transactional.** The outbox row is updated and the remote link written inside one
+`database.transaction`; if either statement fails, both roll back and the operation stays queued.
+Acknowledged rows are marked, never deleted, so delivery evidence cannot be lost to a crash between the
+remote call and the local write.
+
+### Decisions and deviations from `docs/MILESTONE_2_PLAN.md`
+
+- **No new dependency.** The plan listed `uuid`; an RFC 4122 v4 generator over `Random.secure()` lives in
+  `lib/data/ids.dart` instead, with a format check covered by tests. `pubspec.yaml` is unchanged.
+- **Tombstones are a table, not a `deleted_at` column.** The plan sketched soft-delete columns; a
+  tombstone table keeps every existing query, backup, and widget test unchanged while still preserving
+  what a backend must be told.
+- **`uuid` is nullable in SQL** — backfilled, uniquely indexed, and always populated by the client
+  default — because adding a `NOT NULL` column without a server default would require rebuilding four
+  tables inside an upgrade that is meant to be purely additive.
+- **Repositories write tombstones but do not enqueue.** Queue entries are created by the sync layer and
+  its tests; wiring every local write into the outbox belongs to 2G, when sync becomes opt-in and can be
+  switched off without touching the write path.
+- **Backups keep format 1.** `supportedSchemaVersion` moves to 4, each record now carries its `uuid`
+  (absent in older files, which mint fresh ones on restore), and restore/reset also clear the sync
+  tables, because replacing all local data would otherwise leave queue entries and links pointing at
+  rows that no longer exist.
+
+### Verification on Windows
+
+- `dart format lib test integration_test` — no changes.
+- `flutter analyze` — `No issues found!`.
+- `flutter test` — all **69** tests passed (45 existing plus 24 new).
+- `flutter build windows --debug` — succeeded (`build/windows/x64/runner/Debug/flowstate.exe`).
+- `flutter test integration_test/app_flow_test.dart -d windows` — both on-device tests passed, so the
+  task/focus/restart flow and the habits/notes/insights/settings flow still work against a v4 database.
+- New coverage: `test/schema_v4_migration_test.dart` (v3→v4 with every row, relation and preference
+  preserved; UUID validity, uniqueness, and stability across reopen; automatic UUIDs on new rows;
+  database-level rejection of a duplicate; the v2→v4 chain) and `test/sync_scaffolding_test.dart`
+  (outbox ordering, acknowledgement and retention, backoff, tombstones for all three delete paths,
+  remote links and revisions, sync state persistence, conflict payload retention, engine ordering,
+  stop-on-failure and recovery, and the failure taxonomy).
+
+### Known limitations
+
+- No sync engine runs: no HTTP, no Supabase client, no account, no scheduling, no background work.
+  `SyncEngine` is invoked only by tests.
+- `RemoteBackend.pull` is declared but unused, and conflicts are a foundation only — payloads are
+  retained, with no merge logic and no resolution UI.
+- Habit completions and preferences have no UUIDs yet, so their sync identity is deferred.
+- Bulk operations (`deleteAll`, backup restore, reset) clear sync bookkeeping instead of producing
+  per-row tombstones. That is correct for a replace-everything path, but it means bulk deletion is not
+  individually communicable.
+- Android, Linux, release builds, installers, and distribution remain unverified; the Android SDK is
+  absent from this machine.

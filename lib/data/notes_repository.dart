@@ -1,6 +1,8 @@
 import 'package:drift/drift.dart';
 
 import 'flowstate_database.dart';
+import 'sync/sync_models.dart';
+import 'sync/sync_store.dart';
 
 class NotesRepository {
   NotesRepository(this._database);
@@ -62,9 +64,25 @@ class NotesRepository {
         ),
       );
 
-  Future<int> delete(int id) => (_database.delete(
-    _database.notes,
-  )..where((row) => row.id.equals(id))).go();
+  /// Deletes the row and keeps a durable tombstone for synchronization.
+  ///
+  /// The tombstone is written in the same transaction as the delete, so a crash
+  /// can never leave a record that vanished locally with nothing left to report
+  /// to a future backend.
+  Future<int> delete(int id) => _database.transaction(() async {
+    final deleted = await (_database.select(
+      _database.notes,
+    )..where((row) => row.id.equals(id))).getSingleOrNull();
+    if (deleted == null) return 0;
+    await recordLocalDeletion(
+      _database,
+      entity: SyncEntity.note,
+      entityUuid: deleted.uuid,
+    );
+    return (_database.delete(
+      _database.notes,
+    )..where((row) => row.id.equals(id))).go();
+  });
 
   Future<void> deleteAll() => _database.delete(_database.notes).go();
 

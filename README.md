@@ -30,7 +30,7 @@ For local persistence, FlowState uses SQLite through Drift, with a feature-level
 - [x] Milestone 1A — responsive shell and tested stopwatch model (Flutter dependencies, analysis, tests, and Windows debug launch verified).
 - [x] Milestone 1B — local SQLite with migrations, recoverable sessions, persistent task CRUD, saved-data Home dashboard, and timer integration; verified by 16 automated tests and a Windows on-device integration test.
 - [x] Milestone 1C — local habits, notes, insights, settings, and versioned JSON backup/restore; verified by 45 automated tests, a Windows debug build and launch, and two on-device Windows integration tests. Local and remote Milestone 1C were merged and pushed in `3c3673d`.
-- [ ] Milestone 2 — optional identities, friends, private rooms, authorization, realtime sessions and background sync (2A backend foundation complete; client work not started).
+- [ ] Milestone 2 — optional identities, friends, private rooms, authorization, realtime sessions and background sync (2A backend foundation and 2B local schema v4 with sync scaffolding complete; identity, friends, rooms and the sync engine not started).
 - [ ] Milestone 3 — opt-in Chromium website-blocking extension; assess platform-specific native integrations only where users can configure them safely.
 - [ ] Milestone 4 — research and, if policy and device testing support it, an opt-in Android Accessibility focus-friction prototype.
 - [ ] Milestone 5 — migration, security, accessibility, cross-platform QA, documentation, reproducible release builds and installer/package generation.
@@ -110,7 +110,7 @@ Backups are written wherever the user chooses in the save dialog, and a safety b
 
 ## Milestone 2 plan
 
-Milestone 2 (optional identities, friends, private rooms, realtime presence, and background synchronization) is planned; its phase 2A backend foundation (schema, row level security, RPCs and security tests) exists under [`supabase/`](supabase/README.md), but no client integration, dependency, deployment, or Milestone 2B work has started. The plan — Supabase evaluation and free-tier risks, remote and local data models, authorization rules, conflict handling, integrity rules for competitive statistics, testing strategy, and phase order — lives in [docs/MILESTONE_2_PLAN.md](docs/MILESTONE_2_PLAN.md) and is not duplicated here.
+Milestone 2 (optional identities, friends, private rooms, realtime presence, and background synchronization) is planned; its phase 2A backend foundation (schema, row level security, RPCs and security tests) exists under [`supabase/`](supabase/README.md), and phase 2B added local schema v4 with provider-neutral sync scaffolding in `lib/data/sync/`. There is still no client integration, no Supabase dependency, no account, no network call, and nothing is deployed. The plan — Supabase evaluation and free-tier risks, remote and local data models, authorization rules, conflict handling, integrity rules for competitive statistics, testing strategy, and phase order — lives in [docs/MILESTONE_2_PLAN.md](docs/MILESTONE_2_PLAN.md) and is not duplicated here.
 
 ## Build and distribution roadmap
 
@@ -128,5 +128,7 @@ A free GitHub release can be considered only after actual artifacts build; no re
 Milestone 1A verification is recorded in [PROJECT_STATUS.md](PROJECT_STATUS.md), with commit `7405c2a`. Milestone 1B passed `dart format`, `flutter analyze`, all 16 of its automated tests, the Windows debug build, and an on-device Windows integration test, and the built app was observed running with persisted data surviving a restart. Milestone 1C passes the same checks with 45 automated tests, a Windows debug build, a launch of the built app, an on-disk schema v3 migration, and two on-device Windows integration tests, recorded under commits `4228eb3` and `39e4a0e`.
 
 Local and remote Milestone 1C were reconciled on 2026-11-01 with a real merge commit, `3c3673da1378a6f95dc1e1fd90391659a543f4fa` (`Merge origin/main into main`), whose parents are the local tip `39e4a0e` and the remote tip `3929e00`. Nothing was rebased, squashed, cherry-picked, or force-pushed; both histories are preserved and the result was pushed normally (`3929e00..3c3673d`). Local `main` and `origin/main` now point at that commit. Formatting, analysis, all 45 tests, the Windows debug build, and both Windows integration tests were re-run with the merge applied and passed. The schema reconciliation caveat is recorded in [PROJECT_STATUS.md](PROJECT_STATUS.md) §7.
+
+Milestone 2B passes the same checks with **69** automated tests, a Windows debug build, and both Windows integration tests; the v3→v4 upgrade, UUID backfill and outbox behavior are covered by tests, and the record is in [PROJECT_STATUS.md](PROJECT_STATUS.md) §10. It introduces no network code and no new dependency.
 
 No release build, installer, APK, Android device test, or Linux test is claimed.

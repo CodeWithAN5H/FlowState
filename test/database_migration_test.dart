@@ -63,7 +63,7 @@ void main() {
           .customSelect('PRAGMA user_version')
           .getSingle()
           .then((row) => row.read<int>('user_version'));
-      expect(version, 3);
+      expect(version, 4);
     } finally {
       await database.close();
       if (file.existsSync()) file.deleteSync();

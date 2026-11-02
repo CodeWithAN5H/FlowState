@@ -2,6 +2,8 @@ import 'package:drift/drift.dart';
 
 import 'flowstate_database.dart';
 import 'settings_repository.dart';
+import 'sync/sync_models.dart';
+import 'sync/sync_store.dart';
 
 /// Drops the time part so completions are compared per calendar day.
 DateTime dateOnly(DateTime value) =>
@@ -159,9 +161,25 @@ class HabitsRepository {
         ),
       );
 
-  Future<int> delete(int id) => (_database.delete(
-    _database.habits,
-  )..where((row) => row.id.equals(id))).go();
+  /// Deletes the row and keeps a durable tombstone for synchronization.
+  ///
+  /// The tombstone is written in the same transaction as the delete, so a crash
+  /// can never leave a record that vanished locally with nothing left to report
+  /// to a future backend.
+  Future<int> delete(int id) => _database.transaction(() async {
+    final deleted = await (_database.select(
+      _database.habits,
+    )..where((row) => row.id.equals(id))).getSingleOrNull();
+    if (deleted == null) return 0;
+    await recordLocalDeletion(
+      _database,
+      entity: SyncEntity.habit,
+      entityUuid: deleted.uuid,
+    );
+    return (_database.delete(
+      _database.habits,
+    )..where((row) => row.id.equals(id))).go();
+  });
 
   /// Marks [day] for a habit. Inserting the same day twice is a no-op.
   Future<void> setCompletedOn(

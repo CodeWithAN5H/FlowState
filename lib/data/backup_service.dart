@@ -67,7 +67,7 @@ class BackupService {
 
   static const formatId = 'flowstate-backup';
   static const formatVersion = 1;
-  static const supportedSchemaVersion = 3;
+  static const supportedSchemaVersion = 4;
 
   final FlowStateDatabase _database;
   final Future<Directory> Function() _backupDirectory;
@@ -107,6 +107,7 @@ class BackupService {
               'completedAt': row.completedAt?.toIso8601String(),
               'createdAt': row.createdAt.toIso8601String(),
               'updatedAt': row.updatedAt.toIso8601String(),
+              'uuid': row.uuid,
             },
         ],
         'focusSessions': [
@@ -118,6 +119,7 @@ class BackupService {
               'durationMillis': row.durationMillis,
               'status': row.status,
               'runningSinceMillis': row.runningSinceMillis,
+              'uuid': row.uuid,
             },
         ],
         'habits': [
@@ -129,6 +131,7 @@ class BackupService {
               'isArchived': row.isArchived,
               'createdAt': row.createdAt.toIso8601String(),
               'updatedAt': row.updatedAt.toIso8601String(),
+              'uuid': row.uuid,
             },
         ],
         'habitCompletions': [
@@ -148,6 +151,7 @@ class BackupService {
               'content': row.content,
               'createdAt': row.createdAt.toIso8601String(),
               'updatedAt': row.updatedAt.toIso8601String(),
+              'uuid': row.uuid,
             },
         ],
         'preferences': [
@@ -199,12 +203,7 @@ class BackupService {
     final data = _parse(source);
     final safety = await saveSafetyBackup(now: now);
     await _database.transaction(() async {
-      await _database.delete(_database.habitCompletions).go();
-      await _database.delete(_database.habits).go();
-      await _database.delete(_database.notes).go();
-      await _database.delete(_database.focusSessions).go();
-      await _database.delete(_database.tasks).go();
-      await _database.delete(_database.preferences).go();
+      await _clearLocalData();
       await _database.batch((batch) {
         batch.insertAll(_database.tasks, data.tasks);
         batch.insertAll(_database.focusSessions, data.focusSessions);
@@ -218,14 +217,25 @@ class BackupService {
   }
 
   /// Deletes all local rows. Callers must confirm with the user first.
-  Future<void> resetAllData() => _database.transaction(() async {
+  Future<void> resetAllData() => _database.transaction(_clearLocalData);
+
+  /// Deletes every stored row, including synchronization bookkeeping.
+  ///
+  /// Restore and reset replace the whole local dataset, so queued operations
+  /// and remote links for rows that no longer exist would be stale references.
+  Future<void> _clearLocalData() async {
+    await _database.delete(_database.syncOutbox).go();
+    await _database.delete(_database.syncState).go();
+    await _database.delete(_database.remoteLinks).go();
+    await _database.delete(_database.syncConflicts).go();
+    await _database.delete(_database.syncTombstones).go();
     await _database.delete(_database.habitCompletions).go();
     await _database.delete(_database.habits).go();
     await _database.delete(_database.notes).go();
     await _database.delete(_database.focusSessions).go();
     await _database.delete(_database.tasks).go();
     await _database.delete(_database.preferences).go();
-  });
+  }
 
   _BackupData _parse(String source) {
     final Object? decoded;
@@ -275,6 +285,7 @@ class BackupService {
               _asDate(row['createdAt'], 'createdAt', 'habit') ?? DateTime.now(),
           updatedAt:
               _asDate(row['updatedAt'], 'updatedAt', 'habit') ?? DateTime.now(),
+          uuid: _optionalUuid(row, 'habit'),
         ),
     ];
     final habitIds = {for (final habit in habits) habit.id.value};
@@ -298,6 +309,7 @@ class BackupService {
               _asDate(row['createdAt'], 'createdAt', 'task') ?? DateTime.now(),
           updatedAt:
               _asDate(row['updatedAt'], 'updatedAt', 'task') ?? DateTime.now(),
+          uuid: _optionalUuid(row, 'task'),
         ),
     ];
     final sessions = [
@@ -311,6 +323,7 @@ class BackupService {
           runningSinceMillis: Value(
             (row['runningSinceMillis'] as num?)?.toInt(),
           ),
+          uuid: _optionalUuid(row, 'session'),
         ),
     ];
     final notes = [
@@ -323,6 +336,7 @@ class BackupService {
               _asDate(row['createdAt'], 'createdAt', 'note') ?? DateTime.now(),
           updatedAt:
               _asDate(row['updatedAt'], 'updatedAt', 'note') ?? DateTime.now(),
+          uuid: _optionalUuid(row, 'note'),
         ),
     ];
     final preferences = [
@@ -342,6 +356,15 @@ class BackupService {
       notes: notes,
       preferences: preferences,
     );
+  }
+
+  /// Backup documents written before schema v4 have no uuid; leaving the
+  /// value absent lets the column's client default mint a fresh one.
+  static Value<String> _optionalUuid(Map<String, Object?> row, String section) {
+    final value = row['uuid'];
+    if (value == null) return const Value.absent();
+    if (value is String && value.isNotEmpty) return Value(value);
+    throw BackupException('Backup $section has an invalid "uuid".');
   }
 
   HabitCompletionsCompanion _completion(
