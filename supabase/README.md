@@ -13,7 +13,7 @@ unchanged. No secret or project credential is stored in this repository.
 
 | Area | Files |
 |---|---|
-| Versioned SQL migrations | `migrations/20261102*.sql` (eight files, applied in filename order) |
+| Versioned SQL migrations | `migrations/20261102*.sql` (nine files, applied in filename order; the ninth adds default-privilege hardening) |
 | Security and behaviour tests | `tests/*.test.sql`, fixtures in `tests/seed.sql` |
 | Test helpers | `tests/00_test_helpers.sql` (test-only; never ship) |
 | Local runner | `tests/harness/` (Node + PGlite, no Docker needed) |

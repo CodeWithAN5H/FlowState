@@ -138,13 +138,13 @@ Milestone 2A is implemented as backend SQL only, under `supabase/`. The Flutter 
 `pubspec.yaml`, `lib/`, `test/`, and the local SQLite schema are unchanged; the app still requires no
 account and no network, and nothing is deployed or integrated.
 
-**Schema.** Eight additive migrations create `profiles`, `friendships`, `friend_requests`, `blocks`,
+**Schema.** Nine additive migrations create `profiles`, `friendships`, `friend_requests`, `blocks`,
 `rooms`, `room_members`, `room_invites`, `room_messages`, `room_sessions`, `session_reports`,
 `session_heartbeats`, and `invite_attempts`. Row level security is enabled on every table and each
 one is closed to `anon` and `authenticated` before explicit grants are added — several of them
 per-column, so clients cannot read `profiles.last_seen_at`, `room_invites.code_hash`, or any
-`session_reports.server_observed_*` column. A defensive default-privilege migration means a future
-table starts unreadable rather than exposed.
+`session_reports.server_observed_*` column. The ninth migration adds a defensive default-privilege
+rule, so a table added to `public` later starts unreadable rather than exposed.
 
 **Authorization.** No client holds INSERT/UPDATE/DELETE on rooms, memberships, invitations,
 friendships, or blocks. Those changes go through `SECURITY DEFINER` functions that derive the caller
