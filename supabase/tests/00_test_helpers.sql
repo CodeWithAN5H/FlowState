@@ -73,5 +73,16 @@ begin
 end;
 $$;
 
+-- Invitation codes used by the fixtures. Each is 32 hex characters, matching the 128-bit codes
+-- that public.create_room_invite() generates.
+create function tests.code_valid() returns text language sql immutable as $$ select 'a1b2c3d4e5f60718293a4b5c6d7e8f90'::text $$;
+create function tests.code_expired() returns text language sql immutable as $$ select 'b1b2c3d4e5f60718293a4b5c6d7e8f90'::text $$;
+create function tests.code_revoked() returns text language sql immutable as $$ select 'c1b2c3d4e5f60718293a4b5c6d7e8f90'::text $$;
+create function tests.code_multi() returns text language sql immutable as $$ select 'd1b2c3d4e5f60718293a4b5c6d7e8f90'::text $$;
+
+-- Well-formed but unknown code, for redemption rate-limit cases.
+create function tests.code_garbage(p_n integer) returns text
+language sql immutable as $$ select 'bad' || lpad(p_n::text, 29, '0') $$;
+
 grant usage on schema tests to anon, authenticated;
 grant execute on all functions in schema tests to anon, authenticated;

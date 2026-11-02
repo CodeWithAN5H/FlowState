@@ -14,6 +14,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
+import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const supabaseDir = resolve(here, '..', '..');
@@ -64,7 +65,7 @@ function short(error) {
 }
 
 async function main() {
-  const db = new PGlite();
+  const db = new PGlite({ extensions: { pgcrypto } });
   await db.exec(BOOTSTRAP);
 
   const migrations = (await readdir(migrationsDir))

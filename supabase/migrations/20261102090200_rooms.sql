@@ -225,7 +225,10 @@ end;
 $$;
 
 -- Milestone 2 has no message editing: the only permitted update is a soft delete, and a deleted
--- message cannot be restored.
+-- message cannot be restored. One exception is required: deleting an account sets author_id to NULL
+-- through the foreign key (ON DELETE SET NULL), and that internal update fires this trigger. Without
+-- the exception, account deletion would fail with "messages cannot be edited". A client cannot
+-- exploit it, because author_id is not in the UPDATE grant at all.
 create function app.room_messages_before_update()
 returns trigger
 language plpgsql
@@ -234,9 +237,13 @@ set search_path = ''
 as $$
 begin
   if new.body is distinct from old.body
-     or new.room_id is distinct from old.room_id
-     or new.author_id is distinct from old.author_id then
+     or new.room_id is distinct from old.room_id then
     raise exception 'messages cannot be edited' using errcode = '22023';
+  end if;
+
+  -- Author changes are refused except the foreign-key anonymisation, which can only clear it.
+  if new.author_id is distinct from old.author_id and new.author_id is not null then
+    raise exception 'a message cannot be reassigned to another author' using errcode = '22023';
   end if;
 
   if old.deleted_at is not null and new.deleted_at is null then

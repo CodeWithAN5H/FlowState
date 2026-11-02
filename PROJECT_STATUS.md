@@ -151,7 +151,8 @@ friendships, or blocks. Those changes go through `SECURITY DEFINER` functions th
 from `auth.uid()` and re-check ownership or membership, because a definer function bypasses RLS. All
 of them pin `search_path` to the empty string with fully-qualified names. Blocks are symmetric and end
 any friendship or pending request; invitation codes are hashed with SHA-256, single-use by default,
-expiring, revocable, atomically redeemed under a row lock, and rate limited against guessing. Room
+expiring, revocable, capped per room, atomically redeemed under a row lock, and rate limited
+against guessing. Codes carry 128 bits of entropy and only their SHA-256 digest is stored. Room
 messages are member-only, length- and rate-limited, soft-deletable, and not editable. Removing a
 member closes their membership interval immediately and revokes message access.
 
@@ -170,3 +171,32 @@ This is real PostgreSQL running the real migrations, but the `auth` schema is a 
 GoTrue sign-in, realtime authorization, and project pausing remain **unverified** until a local
 Supabase stack or disposable project exists. No Supabase account or project was created, nothing was
 deployed, and no credential is stored in the repository.
+
+## 9. Milestone 2A security review (2026-11-02)
+
+A review pass over every migration and function produced two fixes and one hardening change:
+
+1. **Account deletion was impossible.** `room_messages` uses `ON DELETE SET NULL` for `author_id`,
+   and that internal update fires the "messages cannot be edited" trigger, so deleting a profile
+   failed. The guard now permits only the anonymising change (author cleared, body and room
+   unchanged) and still refuses reassignment. A structural test deletes an author and asserts the
+   message survives with a null author.
+2. **Invitation codes carried 40 bits.** They are now 128 bits: 16 bytes from
+   `extensions.gen_random_bytes(16)` rendered as 32 lowercase hex characters, still stored only as a
+   SHA-256 digest and returned in plaintext once. `pgcrypto` is the schema's only extension
+   dependency; a migration-time check fails fast if it is absent, and the fixture codes, tests and
+   documentation were updated with it.
+3. **Invitation minting was unbounded.** Each active code is a credential, so a room is now capped at
+   25 active codes; minting past that returns a rate-limit error. A test mints in a loop and asserts
+   both the refusal and that the rejected burst stored nothing.
+
+The review also re-confirmed: RLS on every public table; no `anon` privilege on any table, column, or
+function; column-level protection of `profiles.last_seen_at`, `room_invites.code_hash`, and every
+`session_reports.server_observed_*` column; every `SECURITY DEFINER` function pinned to an empty
+`search_path`; internal helpers unreachable by clients; and the approved offline-time policy intact —
+self-reported time counts, sync never implies observation.
+
+Known gaps, reported rather than silently accepted: a user can still create unlimited rooms (row
+growth only, no access granted, bounded by friends-scale use); handles can be changed without the
+planned cooldown; and redemption is serialised with `FOR UPDATE` but was not exercised under real
+concurrency, because the harness is single-connection.

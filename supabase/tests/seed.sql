@@ -55,13 +55,13 @@ values (
 -- sha256 of the plaintext code, which is what the RPC stores.
 insert into public.room_invites (id, room_id, created_by, code_hash, max_uses, expires_at, revoked_at) values
   ('f3000000-0000-4000-8000-000000000001', tests.room(), tests.alice(),
-   encode(sha256(convert_to('aaaaaaaaaa', 'UTF8')), 'hex'), 1, now() + interval '1 day', null),
+   encode(sha256(convert_to(tests.code_valid(), 'UTF8')), 'hex'), 1, now() + interval '1 day', null),
   ('f3000000-0000-4000-8000-000000000002', tests.room(), tests.alice(),
-   encode(sha256(convert_to('bbbbbbbbbb', 'UTF8')), 'hex'), 1, now() - interval '1 day', null),
+   encode(sha256(convert_to(tests.code_expired(), 'UTF8')), 'hex'), 1, now() - interval '1 day', null),
   ('f3000000-0000-4000-8000-000000000003', tests.room(), tests.alice(),
-   encode(sha256(convert_to('cccccccccc', 'UTF8')), 'hex'), 1, now() + interval '1 day', now()),
+   encode(sha256(convert_to(tests.code_revoked(), 'UTF8')), 'hex'), 1, now() + interval '1 day', now()),
   ('f3000000-0000-4000-8000-000000000004', tests.room(), tests.alice(),
-   encode(sha256(convert_to('dddddddddd', 'UTF8')), 'hex'), 2, now() + interval '2 days', null);
+   encode(sha256(convert_to(tests.code_multi(), 'UTF8')), 'hex'), 2, now() + interval '2 days', null);
 
 -- Alice: one session recorded offline (self-reported) and one the server observed.
 -- Bob: one session recorded offline.

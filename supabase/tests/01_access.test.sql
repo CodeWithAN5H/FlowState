@@ -10,7 +10,7 @@ select tests.expect_error('anon cannot select rooms', 'select count(*) from publ
 select tests.expect_error('anon cannot select messages', 'select count(*) from public.room_messages');
 select tests.expect_error('anon cannot select reports', 'select count(*) from public.session_reports');
 select tests.expect_error('anon cannot select memberships', 'select count(*) from public.room_members');
-select tests.expect_error('anon cannot redeem an invite', $$select public.redeem_room_invite('aaaaaaaaaa')$$);
+select tests.expect_error('anon cannot redeem an invite', $$select public.redeem_room_invite(tests.code_valid())$$);
 select tests.expect_error('anon cannot send a friend request', $$select public.send_friend_request('alice')$$);
 select tests.expect_error('anon cannot create a room', $$select public.create_room('x')$$);
 

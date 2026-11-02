@@ -120,7 +120,7 @@ Migration tests must prove v3→v4 preserves every existing row, that UUIDs are 
 - RLS enabled on every table, preceded by `revoke all` on `anon`/`authenticated`, followed by explicit grants. A table without a policy is unreadable rather than accidentally public.
 - Membership helpers (`is_room_member`, `is_room_owner`) as `security definer` functions with a pinned `search_path`, used consistently by policies.
 - The client holds only the publishable key. Hashing invite codes, aggregating leaderboards, and destroying accounts happen in SQL functions or triggers, never in client code.
-- **Invites:** 8–10 character codes stored as SHA-256 hashes, single-use by default, expiring, revocable and regenerable. Redemption is a single RPC that atomically validates expiry/uses, records the attempt, and inserts membership; per-user attempt rate limiting prevents enumeration. Codes identify a room but never list rooms.
+- **Invites:** 128-bit codes (16 CSPRNG bytes rendered as 32 lowercase hex characters) stored only as SHA-256 hashes, single-use by default, expiring, revocable and regenerable, with a cap on active codes per room. Redemption is a single RPC that atomically validates expiry/uses, records the attempt, and inserts membership; per-user attempt rate limiting prevents enumeration. Codes identify a room but never list rooms.
 - **Ownership:** `transfer_ownership` is owner-only and requires the target to be a current member; `leave_room` refuses while the caller is the owner.
 - **Removal:** setting `removed_at` immediately invalidates realtime authorization, and the server broadcasts `membership_revoked` so the removed client drops its channel.
 - **Friends:** unique pending pairs, blocked pairs rejected in both directions, and per-user request rate limits (for example 20/day).
@@ -270,13 +270,45 @@ with a pinned empty `search_path`, each deriving the caller from `auth.uid()`.
   returned as outcomes rather than exceptions so the attempt survives the rejection.
 - Account deletion is deferred to 2C. `room_messages.author_id` is nullable with `on delete set
   null`, so the eventual deletion leaves "deleted user" messages behind.
-- Invite codes are 10 hex characters drawn from `gen_random_uuid()`, stored only as a SHA-256 digest,
-  and returned in plaintext exactly once, which avoids a `pgcrypto` dependency.
+- Invite codes are 128 bits: 16 bytes from `extensions.gen_random_bytes(16)` rendered as 32 hex
+  characters, stored only as a SHA-256 digest, and returned in plaintext exactly once. `pgcrypto` is
+  the one extension the schema depends on, which §2 already allows, and a migration-time check fails
+  fast when it is missing.
+
+**Platform independence.** FlowState targets Windows, Android, and Linux from a single Flutter/Dart
+codebase. This backend sits behind an HTTP boundary and is platform-independent: all three
+clients reach it identically, and none of them needs it. Tasks, habits, notes, the timer,
+insights, settings, and backup/restore stay local on every platform, signed in or out, online
+or offline.
 
 **Verification and its limits.** Docker and the Supabase CLI are unavailable on this host, so the
-migrations and 44 security cases were executed against PGlite (PostgreSQL 18 compiled to WebAssembly)
+migrations and 46 security cases were executed against PGlite (PostgreSQL 18 compiled to WebAssembly)
 through `supabase/tests/harness`, with a stub `auth` schema whose `auth.uid()` reads the same
 `request.jwt.claims` setting Supabase uses. The SQL, roles, RLS, grants, constraints, triggers, and
 definer semantics are genuine PostgreSQL; the substitution is the auth layer. This does **not**
 verify PostgREST, GoTrue sign-in, realtime authorization, or project pausing, which still require a
 real local stack or a disposable project.
+
+## 15. Platform independence and the Focus Lock contract
+
+**Targets.** Windows, Android, and Linux, from one Flutter/Dart codebase. The backend is
+platform-independent SQL behind an HTTP boundary, so each client reaches it the same way, and no
+client depends on it: tasks, habits, notes, the timer, insights, settings, and personal statistics
+work signed out and offline on all three platforms, with the backend absent permanently if need be
+(§1). Supabase is an optional remote service, never the foundation of personal productivity.
+
+**Focus Lock (future work; not part of Milestone 2).** These requirements bind whichever phase
+implements it. Nothing below is implemented, and no enforcement code, permission, schema, or
+interface exists in the repository today.
+
+- The user explicitly selects which applications to block. Nothing is blocked without that choice.
+- Only the selected applications are targeted.
+- Other applications remain usable; the whole device or computer is never locked.
+- Windows, Linux, and Android may each need a different enforcement mechanism, and one platform's
+  mechanism never implies another's.
+- The application must never claim blocking is active when enforcement is unavailable — permission
+  revoked, extension removed, service stopped, or platform unsupported. Enforcement state is
+  reported separately from timer state, and the interface says "unavailable" or "degraded" rather
+  than implying protection.
+
+Phase 2A adds no Focus Lock table, function, column, or UI.

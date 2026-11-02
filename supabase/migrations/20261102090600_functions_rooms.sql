@@ -6,6 +6,21 @@
 -- functions are the only write path. Each re-checks ownership or membership explicitly, because a
 -- SECURITY DEFINER function bypasses the RLS policies that would otherwise apply.
 
+-- pgcrypto is the only extension this schema depends on, and plan §2 explicitly allows it. It
+-- provides gen_random_bytes(), the only way to obtain cryptographically secure random bytes from
+-- inside SQL, which invitation codes require.
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
+
+do $$
+begin
+  if to_regprocedure('extensions.gen_random_bytes(integer)') is null then
+    raise exception 'pgcrypto must be installed in the extensions schema for invitation codes'
+      using errcode = '58P01';
+  end if;
+end;
+$$;
+
 create type public.invite_redemption as (room_id uuid, outcome text);
 
 create function public.create_room(
@@ -85,9 +100,23 @@ begin
     raise exception 'invitation uses must be between 1 and 100' using errcode = '22023';
   end if;
 
-  -- 10 lowercase hex characters (40 bits) from gen_random_uuid(), which is backed by the
-  -- platform CSPRNG. No pgcrypto dependency is needed for this.
-  v_code := substring(replace(gen_random_uuid()::text, '-', '') from 1 for 10);
+  -- Minting is unbounded otherwise: every active code is a credential that grants room access, so a
+  -- member with invite rights could create an unlimited number of them. The cap bounds both that
+  -- and the row growth it causes.
+  if (
+    select count(*)
+      from public.room_invites i
+     where i.room_id = p_room
+       and i.revoked_at is null
+       and i.expires_at > now()
+       and i.uses < i.max_uses
+  ) >= 25 then
+    raise exception 'this room already has too many active invitations' using errcode = '42901';
+  end if;
+
+  -- 128 bits of entropy from the platform CSPRNG: 16 random bytes rendered as 32 lowercase hex
+  -- characters. Only the SHA-256 digest is stored, so a database read cannot recover a working code.
+  v_code := encode(extensions.gen_random_bytes(16), 'hex');
 
   insert into public.room_invites (room_id, created_by, code_hash, max_uses, expires_at)
   values (

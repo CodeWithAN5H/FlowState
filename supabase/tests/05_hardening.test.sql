@@ -72,11 +72,19 @@ select tests.eq('authenticated cannot write the observation columns',
 -- case: invitation codes are stored only as digests
 select tests.eq('a code is stored as its SHA-256 digest',
   (select code_hash from public.room_invites where id = 'f3000000-0000-4000-8000-000000000001'),
-  encode(sha256(convert_to('aaaaaaaaaa', 'UTF8')), 'hex'));
+  encode(sha256(convert_to(tests.code_valid(), 'UTF8')), 'hex'));
 
 select tests.eq('the plaintext code appears in no stored column',
-  (select count(*) from public.room_invites where code_hash like '%aaaaaaaaaa%')::text,
+  (select count(*) from public.room_invites where code_hash like '%' || tests.code_valid() || '%')::text,
   '0');
+
+-- case: deleting an account anonymises its messages instead of being blocked
+select tests.eq('bob authored one message', (select count(*) from public.room_messages where author_id = tests.bob())::text, '1');
+delete from public.profiles where id = tests.bob();
+select tests.eq('the message survives the deletion', (select count(*) from public.room_messages where body = 'Thanks!')::text, '1');
+select tests.eq('its author is anonymised', (select coalesce(author_id::text, 'none') from public.room_messages where body = 'Thanks!'), 'none');
+select tests.eq('the room itself survives', (select count(*) from public.rooms)::text, '1');
+select tests.eq('the author''s membership is gone', (select count(*) from public.room_members where user_id = tests.bob())::text, '0');
 
 -- case: SECURITY DEFINER functions cannot be hijacked through search_path
 select tests.eq('every SECURITY DEFINER function pins search_path',

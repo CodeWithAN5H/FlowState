@@ -37,7 +37,7 @@ Two naming notes:
 | Function | Purpose |
 |---|---|
 | `public.create_room(name, invite_policy)` | Creates a room and its owner membership atomically. |
-| `public.create_room_invite(room, max_uses, expires_in)` | Mints a code server-side; returns the plaintext **once**, stores only its SHA-256 digest. |
+| `public.create_room_invite(room, max_uses, expires_in)` | Mints a 128-bit code (16 CSPRNG bytes as 32 hex characters) server-side; returns the plaintext **once**, stores only its SHA-256 digest, and caps active codes per room. |
 | `public.revoke_room_invite(invite)` | Inviter or owner only. |
 | `public.redeem_room_invite(code)` | Atomic, single-use-capable, expiring, rate-limited redemption. Returns `(room_id, outcome)`. |
 | `public.leave_room(room)` | Refuses while the caller is the owner. |
@@ -65,6 +65,17 @@ An offline session that syncs later is stored, counted in personal and friend-gr
 labelled self-reported. There is no cap, no anti-cheat, and no reconciliation heuristic. A
 `SECURITY INVOKER` leaderboard function exposes the split so a caller can label the numbers instead
 of presenting every minute as observed.
+
+## Platform independence
+
+Windows, Android, and Linux are all first-class targets, and nothing in this directory is
+platform-specific. The backend is ordinary SQL behind an HTTP boundary, so every client reaches it
+the same way, and no client requires it: tasks, habits, notes, the timer, insights, settings, and
+personal statistics stay local and work signed out and offline on all three platforms.
+
+**Focus Lock is not here.** It is future work with its own contract — user-selected applications
+only, other applications usable, per-platform enforcement, and no claim of active blocking when
+enforcement is unavailable. See [plan §15](../docs/MILESTONE_2_PLAN.md).
 
 ## Before you create a project
 
@@ -135,8 +146,10 @@ that every public table has RLS and that no function is callable by `anon`.
 - **Realtime channel authorization policies (2F)** and `realtime.broadcast_changes()` triggers.
 - **`session_heartbeats` / observed-time population.** The tables and constraints exist; the
   server-side writer arrives with realtime sessions in 2F.
-- **Schema-level rate-limit tuning.** The current numbers (10 failed redemptions per 10 minutes, 20
-  friend requests per day, 20 messages per minute) are starting points, not measured limits.
+- **Focus Lock** in any form — no blocking, permission, or enforcement code exists.
+- **Schema-level rate-limit tuning.** The current numbers (10 failed redemptions per 10 minutes, 25
+  active invitations per room, 20 friend requests per day, 20 messages per minute) are starting
+  points, not measured limits.
 
 ## Warning
 

@@ -26,7 +26,7 @@ select tests.eq('the owner sees every invitation', (select count(*) from public.
 -- case: invitation codes are hashed and randomised
 select tests.as_user(tests.alice());
 select tests.expect_error('the stored hash is not readable by clients', 'select code_hash from public.room_invites');
-select tests.check('a generated code looks like a random code', (select code ~ '^[a-f0-9]{10}$' from public.create_room_invite(tests.room())));
+select tests.check('a generated code looks like a random code', (select code ~ '^[a-f0-9]{32}$' from public.create_room_invite(tests.room())));
 select tests.check('two generated codes differ', (
   select count(distinct code) = 2
     from (
@@ -36,42 +36,63 @@ select tests.check('two generated codes differ', (
     ) codes
 ));
 
+-- case: invitation minting is capped per room
+select tests.as_user(tests.alice());
+select tests.eq('the seeded room starts with two active invitations',
+  (select count(*) from public.room_invites
+    where revoked_at is null and expires_at > now() and uses < max_uses)::text, '2');
+select tests.expect_error('a room cannot mint unlimited active invitations',
+  $sql$
+  do $do$
+  declare
+    i integer;
+  begin
+    for i in 1..30 loop
+      perform public.create_room_invite('b1000000-0000-4000-8000-000000000001');
+    end loop;
+  end;
+  $do$;
+  $sql$);
+select tests.eq('the rejected burst stored nothing', (select count(*) from public.room_invites)::text, '4');
+select tests.check('one more invitation still works below the cap',
+  (select count(*) from public.create_room_invite(tests.room())) = 1);
+
 -- case: a valid invitation joins the room
 select tests.as_user(tests.carol());
-select tests.eq('the code is accepted', (select outcome from public.redeem_room_invite('aaaaaaaaaa')), 'joined');
+select tests.eq('the code is accepted', (select outcome from public.redeem_room_invite(tests.code_valid())), 'joined');
 select tests.eq('the room is now visible', (select count(*) from public.rooms)::text, '1');
 select tests.eq('the roster shows three', (select count(*) from public.room_members)::text, '3');
 select tests.eq('messages are now readable', (select count(*) from public.room_messages)::text, '2');
-select tests.eq('redeeming again is idempotent', (select outcome from public.redeem_room_invite('aaaaaaaaaa')), 'already_member');
+select tests.eq('redeeming again is idempotent', (select outcome from public.redeem_room_invite(tests.code_valid())), 'already_member');
 select tests.eq('the roster did not grow', (select count(*) from public.room_members)::text, '3');
 
 -- case: a single-use code cannot be redeemed twice
 select tests.as_user(tests.carol());
-select tests.eq('the first redemption joins', (select outcome from public.redeem_room_invite('aaaaaaaaaa')), 'joined');
+select tests.eq('the first redemption joins', (select outcome from public.redeem_room_invite(tests.code_valid())), 'joined');
 select tests.as_user(tests.dave());
-select tests.eq('the second is refused as exhausted', (select outcome from public.redeem_room_invite('aaaaaaaaaa')), 'exhausted');
+select tests.eq('the second is refused as exhausted', (select outcome from public.redeem_room_invite(tests.code_valid())), 'exhausted');
 select tests.eq('the second user did not join', (select count(*) from public.rooms)::text, '0');
 
 -- case: expired and revoked invitations are refused
 select tests.as_user(tests.carol());
-select tests.eq('an expired code', (select outcome from public.redeem_room_invite('bbbbbbbbbb')), 'expired');
-select tests.eq('a revoked code', (select outcome from public.redeem_room_invite('cccccccccc')), 'revoked');
-select tests.eq('an unknown code', (select outcome from public.redeem_room_invite('zzzzzzzzzz')), 'invalid');
+select tests.eq('an expired code', (select outcome from public.redeem_room_invite(tests.code_expired())), 'expired');
+select tests.eq('a revoked code', (select outcome from public.redeem_room_invite(tests.code_revoked())), 'revoked');
+select tests.eq('an unknown code', (select outcome from public.redeem_room_invite(tests.code_garbage(99))), 'invalid');
 select tests.eq('and nothing joined', (select count(*) from public.rooms)::text, '0');
 
 -- case: a multi-use code allows exactly its uses
 select tests.as_user(tests.carol());
-select tests.eq('the first use', (select outcome from public.redeem_room_invite('dddddddddd')), 'joined');
+select tests.eq('the first use', (select outcome from public.redeem_room_invite(tests.code_multi())), 'joined');
 select tests.as_user(tests.dave());
-select tests.eq('the second use', (select outcome from public.redeem_room_invite('dddddddddd')), 'joined');
+select tests.eq('the second use', (select outcome from public.redeem_room_invite(tests.code_multi())), 'joined');
 select tests.as_user(tests.alice());
 select tests.eq('the uses counter stops at the maximum', (select uses::text from public.room_invites where id = 'f3000000-0000-4000-8000-000000000004'), '2');
 
 -- case: guessing codes is rate limited
 select tests.as_user(tests.carol());
-select count(public.redeem_room_invite('bad000000' || g.i::text)) from generate_series(1, 10) as g(i);
-select tests.eq('the next attempt is refused', (select outcome from public.redeem_room_invite('aaaaaaaaaa')), 'rate_limited');
-select tests.eq('a valid code is refused while limited', (select outcome from public.redeem_room_invite('dddddddddd')), 'rate_limited');
+select count(public.redeem_room_invite(tests.code_garbage(g.i))) from generate_series(1, 10) as g(i);
+select tests.eq('the next attempt is refused', (select outcome from public.redeem_room_invite(tests.code_valid())), 'rate_limited');
+select tests.eq('a valid code is refused while limited', (select outcome from public.redeem_room_invite(tests.code_multi())), 'rate_limited');
 select tests.eq('and the caller is still outside', (select count(*) from public.rooms)::text, '0');
 
 -- case: leaving and ownership transfer
@@ -94,7 +115,7 @@ select tests.as_user(tests.bob());
 select public.leave_room(tests.room());
 select tests.eq('the membership interval is closed', (select count(*) from public.room_members where removed_at is not null)::text, '1');
 select tests.eq('the room is no longer visible', (select count(*) from public.rooms)::text, '0');
-select tests.eq('a code lets them return', (select outcome from public.redeem_room_invite('dddddddddd')), 'joined');
+select tests.eq('a code lets them return', (select outcome from public.redeem_room_invite(tests.code_multi())), 'joined');
 select tests.eq('both intervals are kept', (select count(*) from public.room_members)::text, '3');
 
 -- case: only the owner controls the schedule
