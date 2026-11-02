@@ -3,6 +3,7 @@
 **Status:** phases 2A (backend foundation) and 2B (local schema v4 with sync scaffolding) are implemented and locally verified; phases 2C–2H are not started. The app still has no Supabase client, dependency, account, or network call, and nothing is deployed.
 **Written:** 2026-11-01, after Milestone 1C was merged and pushed as `3c3673d`.
 **Revised:** 2026-11-02 — phase 2B implemented as local schema v4 and provider-neutral sync scaffolding; see §16.
+**Revised:** 2026-11-02 — 2A and 2B records corrected, dependency notes updated, and the independent 2B review recorded in §17.
 **Revised:** 2026-11-02 — phase 2A implemented as SQL migrations, RPCs and a security test suite; see §14.
 **Revised:** 2026-11-01 — study-time policy settled for the friends-and-personal stage: sessions recorded offline count as personal study time and towards private friend-group statistics as *self-reported* time, while server observation is recorded as a separate attribute rather than an entry requirement.
 **Scope of this document:** Milestone 2 only. Focus Lock stays in Milestone 3/4, and release artifacts in Milestone 5.
@@ -146,7 +147,7 @@ Migration tests prove v3→v4 preserves every existing row and relation, that UU
 - **Revisions, not clocks:** the server keeps a monotonically increasing `revision` per row. Updates must carry the matching `base_revision`; a mismatch returns the current server row as a conflict, so clock skew cannot decide who wins.
 - **Conflict policy:**
   - Long-form text (note body, habit details, room name): keep the local edit and create a visible "Conflicted copy" duplicate containing the remote version. The user resolves by deleting one; nothing is overwritten silently.
-  - Scalar state (task completion, archive flag): the newer server revision wins, and the losing value is recorded in `conflicts` for diagnostics.
+  - Scalar state (task completion, archive flag): the newer server revision wins, and the losing value is recorded in `sync_conflicts` for diagnostics.
 - **Failure taxonomy** with distinct UI states: no network, 401 (refresh then sign out), 403 (membership revoked), 409 (conflict), 429 (rate limit), 5xx, and project paused (503). Each is retried or surfaced deliberately — never a silent retry loop.
 - **Bounded queues:** outbox pruning after successful sync, with a size cap so an offline device cannot grow without limit.
 
@@ -205,17 +206,17 @@ The choice among these depends on a commercial decision that has not been made, 
 - **Pure unit tests:** outbox state machine, backoff schedule, revision/conflict decision table, presence expiry, attribution mapping across all `local_recorded` / `server_observed` / `sync_status` combinations, UTC bucket boundaries, invite-code format and hashing.
 - **Local database tests:** v3→v4 migration and UUID backfill, tombstone round-trip, stable ids across reopen.
 - **Repository contract tests** against a fake backend implementing the same interface: duplicate delivery, out-of-order acknowledgements, 409 conflicts, 429 rate limits, 401 expiry, and simulated project pausing.
-- **Backend authorization matrix** (needs the local Supabase stack): for every table, prove a user cannot read or write another user's rows, a non-member cannot read room data, a removed member loses message access, owner-only operations fail for members, expired/reused invites are rejected, and no secret key exists in client configuration.
+- **Backend authorization matrix:** for every table, prove a user cannot read or write another user's rows, a non-member cannot read room data, a removed member loses message access, owner-only operations fail for members, expired/reused invites are rejected, and no secret key exists in client configuration. It runs today against the PGlite harness (§14) and must be re-run against a real Supabase stack once one exists.
 - **Realtime tests:** two clients see presence, messages, and schedule changes; a third non-member is refused; disconnect produces a leave event; removal drops the channel; a network cut followed by reconnect converges to the REST snapshot.
 - **Attribution tests:** an offline session that later syncs stays `server_observed = false` and still appears in friend-group totals, labelled self-reported; `sync_status = synced` never sets or implies observation; a session with heartbeats reports an observed duration independent of the client's claim; no code path caps, rejects, or upgrades a duration.
 - **Explicit failure scenarios:** offline cold start, airplane mode mid-session, app kill during sync, duplicate events, backwards clock change, paused project, revoked membership during a focus session, invite brute force, oversized message, rate limiting.
 - **On-device:** extend the Windows integration tests with a sign-in, room creation, and two-client presence check against the local stack. Android and Linux remain unverified until hardware is available.
-- **Prerequisite:** a Supabase CLI + Docker local stack on this Windows host is unverified. Milestone 2 cannot be honestly verified without either a local stack or a disposable project, so confirm that before starting 2A.
+- **Platform integration prerequisite (not yet met):** phase 2A has been executed against the PGlite PostgreSQL harness (§14). That is real PostgreSQL — roles, RLS, grants, constraints and `SECURITY DEFINER` semantics are genuinely exercised — but it substitutes a stub `auth` schema, so GoTrue sign-in, PostgREST, Realtime authorization, the publishable-key client path and project pausing are **not** verified. A real Supabase stack on this host remains unverified; Docker and the Supabase CLI are not installed, and neither was tested here. Confirm a local stack or a disposable project, and exercise those surfaces against it, before claiming any auth, API or realtime capability as verified — starting with identity in 2C and continuing through 2F.
 
 ## 11. Dependencies (planned, none added)
 
 - `supabase_flutter` — the one substantive runtime addition (Auth, Realtime, REST).
-- `uuid` — small, correct v4 identifiers for sync entities.
+- `uuid` — **deliberately not added.** Phase 2B generates RFC 4122 version 4 identifiers in `lib/data/ids.dart` from `Random.secure()`, with a format check, and the v4 migration backfill uses the same shape in SQL. No package was added. Revisit only if a later phase needs a generator feature the local helper does not provide.
 - Secure token storage — only if the SDK default store is not app-private on Windows/Android.
 - Development-only: Supabase CLI + Docker for the local backend and RLS tests.
 - Deliberately **not** added: Riverpod or go_router (current state management and navigation remain adequate), `connectivity_plus` (detect by request failure instead), a charting package (existing charts suffice), and any analytics SDK.
@@ -226,9 +227,9 @@ Each phase is independently shippable, leaves the local app working, and ends wi
 
 | Phase | Work | Exit criteria |
 |---|---|---|
-| **2A** Backend foundation (no client change) — **implemented 2026-11-02** | Supabase schema, RLS, revokes, and RPCs for invites and ownership in `supabase/migrations`. Account deletion moved to 2C, which owns identity. | Authorization matrix green in the local Postgres harness (§14); app untouched. A real Supabase stack remains unverified on this host. |
+| **2A** Backend foundation (no client change) — **implemented 2026-11-02** | Supabase schema, RLS, revokes, and RPCs for invites and ownership in `supabase/migrations`. Deleting a profile works and anonymises authored messages; the privileged client entry point stays with identity in 2C. | Authorization matrix green in the local Postgres harness (§14); app untouched. A real Supabase stack remains unverified on this host. |
 | **2B** Local schema v4 + sync scaffolding — **implemented 2026-11-02** | UUID columns with backfill, outbox/state/conflict/tombstone tables, sync interfaces plus a fake backend; migration and scaffolding tests. | All existing tests still pass (69 in total); no user-visible change. |
-| **2C** Optional identity | Settings → Account, sign-up/in/out, handle claim, account deletion, lazy token handling, offline-safe states. | Signed-out app identical to today; sign-in flow verified on Windows against the local stack. |
+| **2C** Optional identity | Settings → Account, sign-up/in/out, handle claim, the account-deletion entry point behind the existing database capability, lazy token handling, offline-safe states. | Signed-out app identical to today; sign-in flow verified on Windows against the local stack. |
 | **2D** Friends | Handle search, requests, accept/decline/cancel, blocks, friend list, rate limits. | Two-account isolation tests pass. |
 | **2E** Private rooms and invitations | Create/rename/archive, hashed single-use invites with expiry and regeneration, join/leave, owner controls, transfer, removal. | Full authorization matrix including non-member, removed member, expired code. |
 | **2F** Realtime room sessions | Presence, member status, independent sessions, server-anchored group schedules, quick reactions, short messages. | Two-client realtime test on Windows; stale presence and reconnect handled. |
@@ -253,12 +254,14 @@ Each phase is independently shippable, leaves the local app working, and ends wi
 Phase 2A is complete as backend SQL only. `pubspec.yaml`, `lib/`, `test/`, and the local SQLite schema
 are untouched, and nothing is deployed.
 
-**Delivered.** Eight additive migrations in `supabase/migrations/` create `profiles`, `friendships`,
+**Delivered.** Nine additive migrations in `supabase/migrations/` create `profiles`, `friendships`,
 `friend_requests`, `blocks`, `rooms`, `room_members`, `room_invites`, `room_messages`,
 `room_sessions`, `session_reports`, `session_heartbeats`, and `invite_attempts`. Every table has RLS
 enabled and is closed by default; access is granted per table and often per column. Membership,
 ownership, invitation, friendship, and message rules are enforced by `SECURITY DEFINER` functions
-with a pinned empty `search_path`, each deriving the caller from `auth.uid()`.
+with a pinned empty `search_path`, each deriving the caller from `auth.uid()`. The ninth migration
+adds a defensive default-privilege rule, so a table created in `public` later starts unreadable by
+`anon` and `authenticated` instead of exposed.
 
 **Decisions taken during implementation.**
 
@@ -270,8 +273,13 @@ with a pinned empty `search_path`, each deriving the caller from `auth.uid()`.
   normally, and one for a room they have left is refused while the local record is untouched.
 - `invite_attempts` exists because rate limiting needs a durable record of failures, and failures are
   returned as outcomes rather than exceptions so the attempt survives the rejection.
-- Account deletion is deferred to 2C. `room_messages.author_id` is nullable with `on delete set
-  null`, so the eventual deletion leaves "deleted user" messages behind.
+- Account deletion works at the database level and was hardened here rather than deferred:
+  `room_messages.author_id` is nullable with `on delete set null`, and the message-immutability
+  trigger now permits exactly that anonymising change (author cleared, body and room unchanged)
+  while still refusing reassignment, so deleting a profile no longer fails. A structural test
+  deletes an author and asserts the message survives with no author. Phase 2C still owns the
+  client-facing path — an RPC acting on the caller's own identity plus sign-out — because removing
+  an `auth.users` row needs a privileged key that must never ship in the application.
 - Invite codes are 128 bits: 16 bytes from `extensions.gen_random_bytes(16)` rendered as 32 hex
   characters, stored only as a SHA-256 digest, and returned in plaintext exactly once. `pgcrypto` is
   the one extension the schema depends on, which §2 already allows, and a migration-time check fails
@@ -329,6 +337,12 @@ provider-neutral `RemoteBackend` seam, the failure taxonomy, retry backoff, an o
 transactional acknowledgement, a single-pass `SyncEngine`, and an in-memory fake backend used only by
 tests.
 
+**Publication.** Committed as `d595440f9b17fa33071090d0a55fcc5633e68a00` — `Milestone 2B: add local
+sync scaffolding`, parent `1a648ca` — and published to GitHub on 2026-11-02 with a normal, non-force
+push (`1a648ca..d595440`). Local `main` and `origin/main` were verified identical at that hash after
+the push, and the working tree had no tracked modifications. The commit was reviewed independently,
+read-only; that review is recorded in §17.
+
 **Decisions taken during implementation.**
 
 - UUIDs are generated in `lib/data/ids.dart` (RFC 4122 v4 over `Random.secure()`, with a format check)
@@ -357,3 +371,76 @@ passing (45 existing, 24 new), `flutter build windows --debug` succeeded, and bo
 tests passed. Android and Linux remain unverified. Nothing is scheduled or networked: `SyncEngine` is
 invoked only by tests, and `RemoteBackend.pull` and conflict resolution remain foundations rather than
 features.
+
+## 17. Independent Milestone 2B review record (2026-11-02)
+
+Commit `d595440f9b17fa33071090d0a55fcc5633e68a00` was reviewed independently and **read-only**: no file
+was modified, no test was re-run, and nothing was committed. **No CRITICAL finding was reported, no
+current data-loss or corruption path was found inside the implemented 2B scope, and no finding has been
+fixed.** Everything below is recorded as a future synchronization requirement, not as a resolved issue:
+2B remains complete and published (§16), and these items bind the phase that activates sync.
+
+### HIGH — prerequisites before real sync activation in 2G
+
+- **H1 — stale in-flight operations are never reclaimed** (`SyncQueue.pending`, `markInFlight`,
+  `SyncEngine.drainOnce`). An operation marked `inFlight` is excluded from every later claim and there is
+  no timestamp to detect staleness, so an interruption between the claim and the acknowledgement strands
+  it permanently — while later operations for the same record stay claimable and can overtake it.
+- **H2 — ordering is not preserved after a non-retryable failure** (`SyncQueue.pending`). A 401, 403, 409
+  or malformed operation receives no `next_attempt_at`, which stops that row from being claimed but
+  leaves following operations for the same record claimable, so an update can be sent for a create that
+  was never delivered.
+- **H3 — deletions are not enqueued** (`recordLocalDeletion`). A tombstone records that a record was
+  deleted, but no outbox operation is created, so the deletion can never be communicated. The tombstone
+  and the delete operation must be written atomically when sync writes are implemented.
+- **H4 — restore and reset discard tombstones and remote links** (`BackupService.restore`,
+  `resetAllData`, `_clearLocalData`). Replacing the dataset while remote state exists loses pending
+  deletions and remote identity, so a restored row can reappear from the backend or be pushed as a new
+  create for an identifier the server already knows. An explicit policy is required once synchronization
+  exists.
+
+### MEDIUM
+
+- **M1** The v4 upgrade may not be safely repeatable if it is interrupted between a schema change and the
+  version update: `addColumn` is unconditional, so a partial run can fail on the next launch with a
+  duplicate column.
+- **M2** `SyncQueue.acknowledge()` returns before writing a remote link when the operation kind or entity
+  cannot be parsed, leaving the outbox row acknowledged with no recorded remote identity.
+- **M3** `markInFlight` is not a conditional claim, so two overlapping drains can deliver the same
+  operation twice.
+- **M4** `SyncEngine.drainOnce` catches `SyncFailure` only; an unexpected exception escapes after the
+  claim and strands the operation, compounding H1.
+- **M5** Restoring a pre-v4 backup with several rows per table, where a UUID has to be minted per row,
+  has no dedicated test.
+- **M6** `NotesRepository.deleteAll` and `HabitsRepository.deleteAll` delete rows without tombstones.
+  Neither is called by the interface today.
+- **M7** Unchecking a habit day deletes a completion without a completion-level tombstone, so that undo
+  cannot be synchronized; habit completions carry no identifier of their own.
+
+### LOW
+
+- Retry-backoff prose says the delay is capped at five minutes, but the exponent clamp makes 256 seconds
+  the actual maximum.
+- A drain with no configured backend reports offline without recording that state, so `sync_state` can
+  still read `idle`.
+- `pendingCount` and `drainOnce` apply limits without indicating that more work remains.
+- A remote link is left behind after a deletion is acknowledged.
+- The duplicate-UUID test asserts `throwsA(anything)`, which would also pass on an unrelated error
+  instead of specifically a unique-constraint failure.
+- Test coverage gaps: the unique index on a migrated database, UUID survival through export and restore,
+  in-flight recovery, ordering after a non-retryable failure, and multi-row legacy restore.
+- `test/database_migration_test.dart` still describes the upgrade as creating "v3 tables".
+- `sync_state.status` is free-form text rather than a typed status, and several scaffolding members
+  (`SyncFailureKind.fromName`, `httpStatus`, `SyncQueue.byId`, `SyncEngine.database`) are unused.
+- `sync_tombstones` and `sync_conflicts` have no secondary indexes; irrelevant at current scale.
+- The conflict table is named `sync_conflicts` rather than the earlier `conflicts` terminology; §8 now
+  refers to the implemented name.
+
+### 2B limitations versus 2G requirements
+
+The present limits of 2B are intentional and unchanged: nothing runs the queue, no HTTP or Supabase
+client exists, `RemoteBackend.pull` is a declaration rather than a feature, conflict payloads are kept
+but never merged, and no interface reads sync state. The findings above are **requirements for 2G**,
+where sync is activated: H1–H4 must be addressed, and M1–M7 either addressed or consciously accepted,
+before personal sync is enabled. None of them is a reason to reopen or block the published 2B commit,
+and none is claimed as fixed.
