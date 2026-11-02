@@ -163,7 +163,7 @@ column. An offline session that syncs later is stored, counted in `room_leaderbo
 reported as self-reported time with the observed share split out.
 
 **Verification.** Docker and the Supabase CLI are not installed on this machine, so the suite runs
-against PGlite (PostgreSQL 18 in WebAssembly) through `supabase/tests/harness`: all **44 security
+against PGlite (PostgreSQL 18 in WebAssembly) through `supabase/tests/harness`: all **46 security
 cases pass** across five files — anonymous and cross-user isolation, room and message access,
 membership and ownership controls, invitation reuse/expiry/revocation/rate limiting, friendship and
 block rules, attribution behaviour, and structural checks for RLS, grants, and `search_path` pinning.
